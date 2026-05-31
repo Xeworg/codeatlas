@@ -1,0 +1,101 @@
+project:
+  name: CodeAtlas
+  repository_root: .
+  language: es
+
+sdd:
+  initialized: true
+  execution_mode: interactive
+  artifact_store:
+    openspec: true
+    engram: true
+  chained_pr_strategy: auto-forecast
+  review_budget_changed_lines: 400
+  strict_tdd: true
+
+scope:
+  active_version: v1
+  active_change: v1-mvp-core
+  included_languages:
+    - TypeScript
+    - JavaScript
+    - React
+    - Node.js
+    - Rust
+
+architecture:
+  style: Clean Architecture (adaptada a Tauri monolítica)
+  frontend:
+    - React
+    - TypeScript
+    - Vite
+    - Tailwind CSS
+    - React Flow
+    - Zustand
+  backend:
+    - Rust
+    - Tauri v2
+    - Tree-sitter
+    - SQLite
+
+ai:
+  provider_primary: Anthropic
+  model_initial: MiniMax
+  provider_mode: single-provider-v1
+
+testing:
+  runners:
+    rust_unit: "cargo test"
+    rust_integration: "cargo test -- --ignored"
+    rust_contracts: "cargo test -- contracts"
+    frontend_unit: "vitest"
+    frontend_lint: "npm run lint"
+    frontend_typecheck: "npm run typecheck"
+  gates:
+    - cargo fmt --check
+    - cargo clippy -- -D warnings
+    - cargo test
+    - npm run lint
+    - npm run test
+    - npm run typecheck
+
+phase_rules:
+  init:
+    required_outputs:
+      - openspec/config.yaml
+      - phase_summary
+  explore:
+    required_outputs:
+      - problem_boundaries
+      - assumptions
+      - risks
+  proposal:
+    required_outputs:
+      - proposal.md
+      - acceptance_criteria
+  spec:
+    required_outputs:
+      - requirements
+      - scenarios
+  design:
+    required_outputs:
+      - architecture_decisions
+      - interfaces
+  tasks:
+    required_outputs:
+      - task_breakdown
+      - dependency_map
+  apply:
+    enforce_strict_tdd: true
+  verify:
+    required_outputs:
+      - verify-report
+      - evidence_of_tests
+
+references:
+  docs:
+    - docs/MASTER_PROMPT_MVP_CERRADO.md
+    - docs/PLAN_MAESTRO_SPRINTS_UI_BACKEND_V1_A_V3.md
+    - docs/ESTANDARES_CODIGO_REUTILIZABLE_Y_ARQUITECTURA.md
+    - docs/API_CONTRATOS_Y_VERSIONADO.md
+    - docs/PLAN_CALIDAD_TESTS_BENCHMARKS.md

@@ -1,0 +1,1 @@
+Inicialización completada; listo para fase explore.
