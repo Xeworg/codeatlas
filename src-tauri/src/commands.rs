@@ -764,6 +764,7 @@ pub struct SnapshotResponse {
     pub workspace_id: Option<String>,
     pub label: String,
     pub created_at: String,
+    pub payload_json: Option<String>,
 }
 
 #[tauri::command]
@@ -823,42 +824,58 @@ pub fn list_workspace_projects(
         })
 }
 
-// ── Snapshot stubs (full payload capture in PR5) ───────────────────────────
-
 #[tauri::command]
 pub fn create_snapshot(
     project_id: String,
     label: String,
+    workspace_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<SnapshotResponse, String> {
     let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
-    let (id, project_id_out, workspace_id, label_out, created_at) =
-        repo.create_snapshot(&project_id, &label, None).map_err(|e| e.to_string())?;
+    let (id, project_id_out, workspace_id_out, label_out, created_at, payload_json) =
+        repo.create_snapshot(&project_id, &label, workspace_id.as_deref())
+            .map_err(|e| e.to_string())?;
     Ok(SnapshotResponse {
         id,
         project_id: project_id_out,
-        workspace_id,
+        workspace_id: workspace_id_out,
         label: label_out,
         created_at,
+        payload_json,
     })
+}
+
+#[tauri::command]
+pub fn get_snapshot(
+    snapshot_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<SnapshotResponse>, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.get_snapshot(&snapshot_id)
+        .map_err(|e| e.to_string())
+        .map(|opt| opt.map(|(id, project_id, workspace_id, label, created_at, payload_json)| {
+            SnapshotResponse { id, project_id, workspace_id, label, created_at, payload_json }
+        }))
 }
 
 #[tauri::command]
 pub fn list_snapshots(
     project_id: String,
+    workspace_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<SnapshotResponse>, String> {
     let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
-    repo.list_snapshots(&project_id)
+    repo.list_snapshots(&project_id, workspace_id.as_deref())
         .map_err(|e| e.to_string())
         .map(|snaps| {
             snaps.into_iter()
-                .map(|(id, project_id, workspace_id, label, created_at)| SnapshotResponse {
+                .map(|(id, project_id, workspace_id, label, created_at, payload_json)| SnapshotResponse {
                     id,
                     project_id,
                     workspace_id,
                     label,
                     created_at,
+                    payload_json,
                 })
                 .collect()
         })

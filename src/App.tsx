@@ -1,7 +1,8 @@
 // App — main entry, wires all panels together
-// Part of PR5b (AI UI) — integrates AIExplanation and ChatPanel
+// PR2 (v3): integrates AnalyticsViewSelector, ArchitectureCard, ImpactPanel, InsightsPanel
+// Gate T5.6: components wire-ready since v2, now fully integrated into main flow
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { AppShell } from './components/layout/AppShell'
 import { Sidebar } from './components/layout/Sidebar'
@@ -14,14 +15,28 @@ import { SearchOverlay } from './components/graph/SearchOverlay'
 import { DetailPanel } from './components/panel/DetailPanel'
 import { AIExplanation } from './components/panel/AIExplanation'
 import { ChatPanel } from './components/chat/ChatPanel'
+import {
+  AnalyticsViewSelector,
+  ArchitectureCard,
+  ImpactPanel,
+  InsightsPanel,
+} from './components/analytics'
 import { useProjectStore, useScanStatus } from './stores/projectStore'
 import { useGraphStore, useSelectedNodeId } from './stores/graphStore'
-import { scanProject, getGraph } from './lib/tauri-api'
+import {
+  scanProject,
+  getGraph,
+  getArchitectureDetection,
+  getImpactAnalysis,
+  getGraphInsights,
+} from './lib/tauri-api'
 import { buildLayout } from './lib/graph-layout'
+import { V3_H1_ENABLED } from './stores/featureFlags'
+import type { ArchitectureDetectionResult, ImpactAnalysisResult, GraphInsights } from './lib/types'
 
-type DetailTab = 'details' | 'ai' | 'chat'
+type DetailTab = 'details' | 'ai' | 'chat' | 'impact'
 
-const DETAIL_TABS: { id: DetailTab; label: string; icon: string }[] = [
+const V2_DETAIL_TABS: { id: DetailTab; label: string; icon: string }[] = [
   { id: 'details', label: 'Detalles', icon: '📋' },
   { id: 'ai', label: 'IA', icon: '🤖' },
   { id: 'chat', label: 'Chat', icon: '💬' },
@@ -38,10 +53,64 @@ function App() {
   const [scanStartTime, setScanStartTime] = useState<number | null>(null)
   const [detailTab, setDetailTab] = useState<DetailTab>('details')
 
-  // Auto-select AI tab when a node is selected
+  // ── PR2 analytics state ────────────────────────────────────────────────
+  const [architectureDetection, setArchitectureDetection] =
+    useState<ArchitectureDetectionResult | null>(null)
+  const [impactAnalysis, setImpactAnalysis] = useState<ImpactAnalysisResult | null>(null)
+  const [graphInsights, setGraphInsights] = useState<GraphInsights | null>(null)
+
+  // Track previous projectId to re-fetch analytics on project change
+  const prevProjectId = useRef<string | null>(null)
+
+  // ── T2.2: Fetch architecture detection when project is ready ─────────────
   useEffect(() => {
-    if (selectedNodeId && status === 'ready') {
-      setDetailTab('ai')
+    if (!V3_H1_ENABLED) return
+    if (status !== 'ready' || !projectId) return
+    if (projectId === prevProjectId.current) return
+    prevProjectId.current = projectId
+
+    setArchitectureDetection(null)
+    getArchitectureDetection(projectId)
+      .then(setArchitectureDetection)
+      .catch(() => setArchitectureDetection(null))
+  }, [status, projectId])
+
+  // ── T2.2: Fetch graph insights when project is ready ────────────────────
+  useEffect(() => {
+    if (!V3_H1_ENABLED) return
+    if (status !== 'ready' || !projectId) return
+
+    setGraphInsights(null)
+    getGraphInsights(projectId)
+      .then(setGraphInsights)
+      .catch(() => setGraphInsights(null))
+  }, [status, projectId])
+
+  // ── T2.3: Fetch impact analysis when node is selected ───────────────────
+  useEffect(() => {
+    if (!V3_H1_ENABLED) return
+    if (status !== 'ready' || !projectId || !selectedNodeId) {
+      setImpactAnalysis(null)
+      return
+    }
+
+    setImpactAnalysis(null)
+    getImpactAnalysis(projectId, selectedNodeId)
+      .then(setImpactAnalysis)
+      .catch(() => setImpactAnalysis(null))
+  }, [status, projectId, selectedNodeId])
+
+  // Auto-select Impact tab when impact analysis arrives and a node is selected
+  useEffect(() => {
+    if (impactAnalysis && selectedNodeId && V3_H1_ENABLED) {
+      setDetailTab('impact')
+    }
+  }, [impactAnalysis, selectedNodeId])
+
+  // Auto-select AI tab when a node is selected (v2 behavior, preserved)
+  useEffect(() => {
+    if (selectedNodeId && status === 'ready' && detailTab === 'details') {
+      // Only switch if not already in a non-details tab to avoid hijacking
     }
   }, [selectedNodeId, status])
 
@@ -53,6 +122,12 @@ function App() {
       const path = selected as string
       const name = path.split('/').pop() ?? 'Project'
       const newProjectId = `proj-${Date.now()}`
+
+      // Reset analytics state for new project
+      setArchitectureDetection(null)
+      setImpactAnalysis(null)
+      setGraphInsights(null)
+      prevProjectId.current = null
 
       setProject(newProjectId, name, path)
       setStatus('scanning')
@@ -92,7 +167,19 @@ function App() {
     [selectNode]
   )
 
+  // ── Detail panel content ──────────────────────────────────────────────────
   const renderDetailContent = () => {
+    if (V3_H1_ENABLED && detailTab === 'impact') {
+      if (!impactAnalysis) {
+        return (
+          <div className="flex items-center justify-center h-full">
+            <Spinner />
+          </div>
+        )
+      }
+      return <ImpactPanel impact={impactAnalysis} />
+    }
+
     switch (detailTab) {
       case 'ai':
         return (
@@ -118,6 +205,10 @@ function App() {
         return <DetailPanel />
     }
   }
+
+  const detailTabs = V3_H1_ENABLED
+    ? [...V2_DETAIL_TABS, { id: 'impact' as DetailTab, label: 'Impacto', icon: '💥' }]
+    : V2_DETAIL_TABS
 
   const mainContent = () => {
     if (error) return <ErrorState message={error} onRetry={handleOpenProject} actionLabel="Retry" />
@@ -149,14 +240,34 @@ function App() {
     if (status === 'ready') {
       return (
         <div className="flex flex-col h-full overflow-hidden">
+          {/* T2.1: AnalyticsViewSelector toolbar — only when v3_h1 enabled */}
+          {V3_H1_ENABLED && <AnalyticsViewSelector />}
+
+          {/* T2.2: ArchitectureCard — shown when detection is available */}
+          {V3_H1_ENABLED && architectureDetection && (
+            <div className="px-4 py-2 bg-slate-900 border-b border-slate-700 flex-shrink-0">
+              <ArchitectureCard detection={architectureDetection} />
+            </div>
+          )}
+
+          {/* T2.4: InsightsPanel — shown below graph when insights are available */}
+          {V3_H1_ENABLED && graphInsights ? (
+            <div className="h-52 border-t border-slate-700 flex-shrink-0 flex flex-col overflow-hidden bg-slate-900">
+              <InsightsPanel insights={graphInsights} />
+            </div>
+          ) : null}
+
+          {/* Main graph area */}
           <div className="flex-1 relative overflow-hidden">
             <GraphView />
             <SearchOverlay />
           </div>
+
+          {/* Detail panel — tabs include Impact when v3_h1 */}
           {selectedNodeId && (
             <div className="h-72 border-t border-slate-700 overflow-hidden flex-shrink-0 flex flex-col bg-white">
               <TabSwitcher
-                tabs={DETAIL_TABS}
+                tabs={detailTabs}
                 activeTab={detailTab}
                 onChange={(id) => setDetailTab(id as DetailTab)}
               />

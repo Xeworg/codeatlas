@@ -384,8 +384,8 @@ impl<'pool> ProjectRepository<'pool> {
     /// List all workspaces.
     pub fn list_workspaces(&self) -> SqliteResult<Vec<(String, String, String)>> {
         self.pool.with_connection(|conn| {
-            let mut stmt =
-                conn.prepare("SELECT id, name, created_at FROM workspaces ORDER BY created_at DESC")?;
+            let mut stmt = conn
+                .prepare("SELECT id, name, created_at FROM workspaces ORDER BY created_at DESC")?;
             let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
             rows.collect()
         })
@@ -415,9 +415,8 @@ impl<'pool> ProjectRepository<'pool> {
             let mut stmt = conn.prepare(
                 "SELECT workspace_id, project_id FROM workspace_projects WHERE workspace_id = ?1",
             )?;
-            let rows = stmt.query_map(params![workspace_id], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })?;
+            let rows =
+                stmt.query_map(params![workspace_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
             rows.collect()
         })
     }
@@ -426,47 +425,175 @@ impl<'pool> ProjectRepository<'pool> {
     // v3: Snapshots (stub at PR1 — full payload capture in PR5)
     // ──────────────────────────────────────────────────────────────
 
-    /// Create a snapshot with empty payload (stub for PR1).
-    /// Full payload capture implemented in PR5.
+    /// Create a snapshot with full payload capture (PR5).
+    /// Captures: graph_json from graph_cache, latest graph_insights, latest architecture_detection.
     #[allow(clippy::type_complexity)]
     pub fn create_snapshot(
         &self,
         project_id: &str,
         label: &str,
         workspace_id: Option<&str>,
-    ) -> SqliteResult<(String, String, Option<String>, String, String)> {
+    ) -> SqliteResult<(
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+    )> {
         self.pool.with_connection(|conn| {
             let id = uuid::Uuid::new_v4().to_string();
             let created_at = chrono::Utc::now().to_rfc3339();
+
+            // Capture graph_json from graph_cache
+            let graph_json: Option<String> = conn
+                .query_row(
+                    "SELECT graph_json FROM graph_cache WHERE project_id = ?1",
+                    params![project_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .unwrap_or(None);
+
+            // Capture latest graph_insights
+            let insights_json: Option<String> = conn
+                .query_row(
+                    "SELECT json_object('cycles', cycles, 'hotspots', hotspots, \
+                        'avgCoupling', avg_coupling, 'density', density)
+                     FROM graph_insights WHERE project_id = ?1 ORDER BY generated_at DESC LIMIT 1",
+                    params![project_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .unwrap_or(None);
+
+            // Capture latest architecture_detection
+            let arch_json: Option<String> = conn
+                .query_row(
+                    "SELECT json_object('pattern', pattern, 'confidence', confidence, \
+                        'evidence', evidence, 'detectedAt', detected_at)
+                     FROM architecture_detections WHERE project_id = ?1 ORDER BY detected_at DESC LIMIT 1",
+                    params![project_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .unwrap_or(None);
+
+            // Build payload JSON
+            let payload_json = serde_json::json!({
+                "nodes": graph_json.as_ref().and_then(|g| {
+                    serde_json::from_str::<serde_json::Value>(g).ok()
+                        .and_then(|v| v.get("nodes").cloned())
+                }).unwrap_or(serde_json::json!([])),
+                "edges": graph_json.as_ref().and_then(|g| {
+                    serde_json::from_str::<serde_json::Value>(g).ok()
+                        .and_then(|v| v.get("edges").cloned())
+                }).unwrap_or(serde_json::json!([])),
+                "insights": insights_json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()),
+                "architectureDetection": arch_json.and_then(|a| serde_json::from_str::<serde_json::Value>(&a).ok()),
+            }).to_string();
+
             conn.execute(
-                "INSERT INTO snapshots (id, project_id, workspace_id, label, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![id, project_id, workspace_id, label, created_at],
+                "INSERT INTO snapshots (id, project_id, workspace_id, label, created_at, payload_json) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id, project_id, workspace_id, label, created_at, payload_json],
             )?;
-            Ok((id, project_id.to_string(), workspace_id.map(String::from), label.to_string(), created_at))
+            Ok((
+                id,
+                project_id.to_string(),
+                workspace_id.map(String::from),
+                label.to_string(),
+                created_at,
+                Some(payload_json),
+            ))
         })
     }
 
-    /// List snapshots for a project (stub — returns empty list until PR5).
+    /// Get a single snapshot by ID.
+    #[allow(clippy::type_complexity)]
+    pub fn get_snapshot(
+        &self,
+        snapshot_id: &str,
+    ) -> SqliteResult<
+        Option<(
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+        )>,
+    > {
+        self.pool.with_connection(|conn| {
+            conn.query_row(
+                "SELECT id, project_id, workspace_id, label, created_at, payload_json \
+                 FROM snapshots WHERE id = ?1",
+                params![snapshot_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .optional()
+        })
+    }
+
+    /// List snapshots optionally filtered by project_id and/or workspace_id.
     #[allow(clippy::type_complexity)]
     pub fn list_snapshots(
         &self,
         project_id: &str,
-    ) -> SqliteResult<Vec<(String, String, Option<String>, String, String)>> {
+        workspace_id: Option<&str>,
+    ) -> SqliteResult<
+        Vec<(
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+        )>,
+    > {
         self.pool.with_connection(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, project_id, workspace_id, label, created_at
-                 FROM snapshots WHERE project_id = ?1 ORDER BY created_at DESC",
-            )?;
-            let rows = stmt.query_map(params![project_id], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            })?;
-            rows.collect()
+            let sql = match workspace_id {
+                Some(_) => "SELECT id, project_id, workspace_id, label, created_at, payload_json \
+                            FROM snapshots WHERE project_id = ?1 AND workspace_id = ?2 ORDER BY created_at DESC",
+                None => "SELECT id, project_id, workspace_id, label, created_at, payload_json \
+                        FROM snapshots WHERE project_id = ?1 ORDER BY created_at DESC",
+            };
+            let mut stmt = conn.prepare(sql)?;
+            let rows: Vec<(String, String, Option<String>, String, String, Option<String>)> = if let Some(ws) = workspace_id {
+                stmt.query_map(params![project_id, ws], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                    ))
+                })?
+                .collect::<SqliteResult<Vec<_>>>()?
+            } else {
+                stmt.query_map(params![project_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                    ))
+                })?
+                .collect::<SqliteResult<Vec<_>>>()?
+            };
+            Ok(rows)
         })
     }
 }
@@ -667,9 +794,11 @@ mod tests {
             scan_duration_ms: 0,
             status: ScanStatus::Ready,
             error: None,
-        }).unwrap();
+        })
+        .unwrap();
 
-        repo.attach_project_to_workspace(&ws_id, "proj-ws-test").unwrap();
+        repo.attach_project_to_workspace(&ws_id, "proj-ws-test")
+            .unwrap();
 
         let projects = repo.list_workspace_projects(&ws_id).unwrap();
         assert_eq!(projects.len(), 1);
@@ -693,14 +822,21 @@ mod tests {
             scan_duration_ms: 0,
             status: ScanStatus::Ready,
             error: None,
-        }).unwrap();
+        })
+        .unwrap();
 
-        let snap = repo.create_snapshot("proj-snap", "Baseline v1", None).unwrap();
+        let snap = repo
+            .create_snapshot("proj-snap", "Baseline v1", None)
+            .unwrap();
         assert!(!snap.0.is_empty());
         assert_eq!(snap.1, "proj-snap");
         assert_eq!(snap.3, "Baseline v1");
+        assert!(
+            snap.5.is_some(),
+            "payload_json should be populated after PR5"
+        );
 
-        let snaps = repo.list_snapshots("proj-snap").unwrap();
+        let snaps = repo.list_snapshots("proj-snap", None).unwrap();
         assert_eq!(snaps.len(), 1);
     }
 }

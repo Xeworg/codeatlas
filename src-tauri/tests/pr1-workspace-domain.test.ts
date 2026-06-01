@@ -41,7 +41,7 @@ describe('PR1 — Workspace Domain (RED)', () => {
     const projects = await invoke<WorkspaceProject[]>('list_workspace_projects', {
       workspaceId: testWorkspaceId,
     })
-    expect(projects.some(p => p.projectId === testProjectId)).toBe(true)
+    expect(projects.some((p) => p.projectId === testProjectId)).toBe(true)
   })
 
   // ── Snapshot stub ───────────────────────────────────────────────────────────

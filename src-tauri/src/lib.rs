@@ -68,6 +68,7 @@ fn main() {
             commands::attach_project_to_workspace,
             commands::list_workspace_projects,
             commands::create_snapshot,
+            commands::get_snapshot,
             commands::list_snapshots,
         ])
         .run(tauri::generate_context!())

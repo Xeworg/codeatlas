@@ -186,11 +186,7 @@ import type {
 
 // MARK: v3 Workspace Commands
 
-import type {
-  Workspace,
-  WorkspaceProject,
-  Snapshot,
-} from './types-v3'
+import type { Workspace, WorkspaceProject, Snapshot } from './types-v3'
 
 // MARK: v2 Analysis Commands
 
@@ -282,9 +278,7 @@ export async function attachProjectToWorkspace(
   }
 }
 
-export async function listWorkspaceProjects(
-  workspaceId: string
-): Promise<WorkspaceProject[]> {
+export async function listWorkspaceProjects(workspaceId: string): Promise<WorkspaceProject[]> {
   try {
     return await invoke<WorkspaceProject[]>('list_workspace_projects', { workspaceId })
   } catch (e) {
@@ -292,22 +286,31 @@ export async function listWorkspaceProjects(
   }
 }
 
-// ── Snapshot stubs (full payload capture in PR5) ─────────────────────────
+// ── Snapshots (PR5: full payload capture) ──────────────────────────────
 
 export async function createSnapshot(
   projectId: string,
-  label: string
+  label: string,
+  workspaceId?: string
 ): Promise<Snapshot> {
   try {
-    return await invoke<Snapshot>('create_snapshot', { projectId, label })
+    return await invoke<Snapshot>('create_snapshot', { projectId, label, workspaceId })
   } catch (e) {
     throw toApiError(e, 'INTERNAL')
   }
 }
 
-export async function listSnapshots(projectId: string): Promise<Snapshot[]> {
+export async function getSnapshot(snapshotId: string): Promise<Snapshot | null> {
   try {
-    return await invoke<Snapshot[]>('list_snapshots', { projectId })
+    return await invoke<Snapshot | null>('get_snapshot', { snapshotId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function listSnapshots(projectId: string, workspaceId?: string): Promise<Snapshot[]> {
+  try {
+    return await invoke<Snapshot[]>('list_snapshots', { projectId, workspaceId })
   } catch (e) {
     throw toApiError(e, 'INTERNAL')
   }
