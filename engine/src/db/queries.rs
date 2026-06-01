@@ -1,60 +1,99 @@
 //! Database queries — CRUD for projects, files, symbols, imports.
 
 use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
+use std::sync::Mutex;
 
-use crate::models::{FileInfo, ImportInfo, ScanResult, ScanStatus, SymbolInfo, SymbolKind};
+use crate::models::{FileInfo, ImportInfo, ScanResult};
 
-pub struct DbPool(pub Connection);
+/// Thread-safe wrapper around rusqlite::Connection.
+/// rusqlite::Connection is NOT Send+Sync. Guarding all access
+/// through a Mutex makes it safe for Tauri's async multi-threaded runtime.
+pub struct DbPool(Mutex<Connection>);
 
 impl DbPool {
+    /// Open a connection to a file-path database.
     pub fn new(path: &str) -> SqliteResult<Self> {
         let conn = Connection::open(path)?;
-        Ok(Self(conn))
+        Ok(Self(Mutex::new(conn)))
     }
 
+    /// Open an in-memory database (for tests).
+    #[cfg(test)]
     pub fn in_memory() -> SqliteResult<Self> {
-        Ok(Self(Connection::open_in_memory()?))
+        let conn = Connection::open_in_memory()?;
+        Ok(Self(Mutex::new(conn)))
+    }
+
+    /// Execute a closure with a locked reference to the connection.
+    /// Returns SqliteResult so callers can propagate errors cleanly.
+    pub fn with_connection<T, F>(&self, f: F) -> SqliteResult<T>
+    where
+        F: FnOnce(&Connection) -> SqliteResult<T>,
+    {
+        let guard = self
+            .0
+            .lock()
+            .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
+        f(&guard)
+    }
+
+    /// Initialize the database schema (helper for tests & app init).
+    /// Uses crate::db::schema which is accessible since this function
+    /// is called on DbPool (not from within schema module itself).
+    pub fn init_schema(&self) -> SqliteResult<()> {
+        use crate::db::schema as schema_mod;
+        self.with_connection(schema_mod::init_schema)
     }
 }
 
-pub struct ProjectRepository<'conn> {
-    conn: &'conn Connection,
+/// Low-level repository that borrows a locked connection for the duration
+/// of a single operation. Creates a new borrow per method call so that
+/// multiple concurrent Tauri commands don't block each other.
+pub struct ProjectRepository<'pool> {
+    pool: &'pool DbPool,
 }
 
-impl<'conn> ProjectRepository<'conn> {
-    pub fn new(pool: &'conn DbPool) -> Self {
-        Self { conn: &pool.0 }
+impl<'pool> ProjectRepository<'pool> {
+    pub fn new(pool: &'pool DbPool) -> Self {
+        Self { pool }
     }
 
     pub fn save_scan_result(&self, result: &ScanResult) -> SqliteResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO projects 
-             (id, name, root_path, files_count, symbols_count, imports_count, 
-              scan_duration_ms, status, error, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))",
-            params![
-                result.project_id,
-                result.project_name,
-                result.root_path,
-                result.files_count as i64,
-                result.symbols_count as i64,
-                result.imports_count as i64,
-                result.scan_duration_ms as i64,
-                format!("{:?}", result.status).to_lowercase(),
-                result.error,
-            ],
-        )?;
+        self.pool.with_connection(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO projects
+                 (id, name, root_path, files_count, symbols_count, imports_count,
+                  scan_duration_ms, status, error, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))",
+                params![
+                    result.project_id,
+                    result.project_name,
+                    result.root_path,
+                    result.files_count as i64,
+                    result.symbols_count as i64,
+                    result.imports_count as i64,
+                    result.scan_duration_ms as i64,
+                    format!("{:?}", result.status).to_lowercase(),
+                    result.error,
+                ],
+            )?;
 
-        for file in &result.files {
-            self.save_file(result.project_id.as_str(), file)?;
-        }
+            for file in &result.files {
+                self.save_file_internal(conn, result.project_id.as_str(), file)?;
+            }
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    pub fn save_file(&self, project_id: &str, file: &FileInfo) -> SqliteResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO files 
+    fn save_file_internal(
+        &self,
+        conn: &Connection,
+        project_id: &str,
+        file: &FileInfo,
+    ) -> SqliteResult<()> {
+        conn.execute(
+            "INSERT OR REPLACE INTO files
              (id, project_id, path, name, extension, lines)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -68,88 +107,90 @@ impl<'conn> ProjectRepository<'conn> {
         )?;
 
         for symbol in &file.symbols {
-            self.save_symbol(&file.id, symbol)?;
+            conn.execute(
+                "INSERT OR REPLACE INTO symbols
+                 (id, file_id, name, kind, line_start, line_end, is_exported)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    symbol.id,
+                    file.id,
+                    symbol.name,
+                    format!("{:?}", symbol.kind).to_lowercase(),
+                    symbol.line_start as i64,
+                    symbol.line_end as i64,
+                    symbol.exports,
+                ],
+            )?;
         }
 
         Ok(())
     }
 
-    pub fn save_symbol(&self, file_id: &str, symbol: &SymbolInfo) -> SqliteResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO symbols 
-             (id, file_id, name, kind, line_start, line_end, is_exported)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                symbol.id,
-                file_id,
-                symbol.name,
-                format!("{:?}", symbol.kind).to_lowercase(),
-                symbol.line_start as i64,
-                symbol.line_end as i64,
-                symbol.exports,
-            ],
-        )?;
-        Ok(())
-    }
-
     pub fn get_project(&self, project_id: &str) -> SqliteResult<Option<(String, String, i64)>> {
-        self.conn
-            .query_row(
+        self.pool.with_connection(|conn| {
+            conn.query_row(
                 "SELECT name, root_path, files_count FROM projects WHERE id = ?1",
                 params![project_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
+        })
     }
 
     pub fn get_files(&self, project_id: &str) -> SqliteResult<Vec<FileInfo>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, path, name, extension, lines FROM files WHERE project_id = ?1")?;
+        self.pool.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, path, name, extension, lines
+                     FROM files WHERE project_id = ?1",
+            )?;
 
-        let files = stmt.query_map(params![project_id], |row| {
-            Ok(FileInfo {
-                id: row.get(0)?,
-                path: row.get(1)?,
-                name: row.get(2)?,
-                extension: row.get(3)?,
-                lines: row.get::<_, i64>(4)? as u32,
-                symbols: vec![],
-            })
-        })?;
+            let files = stmt.query_map(params![project_id], |row| {
+                Ok(FileInfo {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    name: row.get(2)?,
+                    extension: row.get(3)?,
+                    lines: row.get::<_, i64>(4)? as u32,
+                    symbols: vec![],
+                })
+            })?;
 
-        files.collect()
+            files.collect()
+        })
     }
 
     pub fn save_import(&self, import: &ImportInfo) -> SqliteResult<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO imports 
-             (id, source_file_id, target_file_id, target_module, import_names, 
-              is_default, is_type_import)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                import.id,
-                import.source_file_id,
-                import.target_file_id,
-                import.target_module,
-                serde_json::to_string(&import.imports).unwrap_or_default(),
-                import.is_default,
-                import.is_type,
-            ],
-        )?;
-        Ok(())
+        self.pool.with_connection(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO imports
+                 (id, source_file_id, target_file_id, target_module, import_names,
+                  is_default, is_type_import)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    import.id,
+                    import.source_file_id,
+                    import.target_file_id,
+                    import.target_module,
+                    serde_json::to_string(&import.imports).unwrap_or_default(),
+                    import.is_default,
+                    import.is_type,
+                ],
+            )?;
+            Ok(())
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema::init_schema;
+    use crate::models::ScanStatus;
+    use crate::models::{SymbolInfo, SymbolKind};
 
     #[test]
     fn save_and_retrieve_project() {
         let pool = DbPool::in_memory().unwrap();
-        init_schema(&pool.0).unwrap();
+        pool.init_schema().unwrap();
         let repo = ProjectRepository::new(&pool);
 
         let result = ScanResult {

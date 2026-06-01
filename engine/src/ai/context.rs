@@ -70,7 +70,7 @@ impl ContextBuilder {
         };
 
         format!(
-            "{}\n\n**Dependencias ({}):**\n{}\n\n**Dependientes ({}):**\n{}\n\n**Código (primeras líneas):**\n```\n{}\n```",
+            "{}\n\n**Dependencias ({}):**\n{}\n\n**Dependientes ({}):**\n{}\n\n**Codigo (primeras lineas):**\n```\n{}\n```",
             node_info,
             deps.len(),
             deps_text,
@@ -90,13 +90,9 @@ impl ContextBuilder {
 
         context.push_str("**Estructura del proyecto:**\n");
         for node in &graph.nodes {
-            context.push_str(&format!(
-                "- {} [{}]\n",
-                node.label,
-                format!("{:?}", node.node_type)
-            ));
+            context.push_str(&format!("- {} [{:?}]\n", node.label, node.node_type));
             if context.len() > MAX_CONTEXT_BYTES / 2 {
-                context.push_str("(más archivos...)\n");
+                context.push_str("(mas archivos...)\n");
                 break;
             }
         }

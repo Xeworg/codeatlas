@@ -208,8 +208,10 @@ module.exports = { calculateTotal };
         let (symbols, imports) = CodeParser::parse_file("test.js", code, "js");
 
         // Should find at least one function symbol
-        assert!(!symbols.is_empty() || !imports.is_empty(), 
-            "Expected symbols or imports, got none");
+        assert!(
+            !symbols.is_empty() || !imports.is_empty(),
+            "Expected symbols or imports, got none"
+        );
     }
 
     #[test]

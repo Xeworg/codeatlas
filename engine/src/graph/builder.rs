@@ -6,13 +6,13 @@ use crate::models::{FileInfo, GraphData, GraphEdge, GraphNode, ImportInfo, NodeT
 use crate::Result;
 
 pub struct GraphBuilder {
-    resolver: crate::graph::PathResolver,
+    _resolver: crate::graph::PathResolver,
 }
 
 impl GraphBuilder {
     pub fn new(root: impl Into<std::path::PathBuf>) -> Self {
         Self {
-            resolver: crate::graph::PathResolver::new(root),
+            _resolver: crate::graph::PathResolver::new(root),
         }
     }
 

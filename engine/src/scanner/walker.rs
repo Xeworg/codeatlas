@@ -112,11 +112,17 @@ mod tests {
         let paths: Vec<_> = files.iter().map(|f| f.relative_path.clone()).collect();
 
         // Should find TypeScript files
-        assert!(paths.iter().any(|p| p.ends_with(".ts")),
-            "Expected at least one .ts file, found: {:?}", paths);
+        assert!(
+            paths.iter().any(|p| p.ends_with(".ts")),
+            "Expected at least one .ts file, found: {:?}",
+            paths
+        );
         // Should NOT include anything from node_modules
-        assert!(!paths.iter().any(|p| p.contains("node_modules")),
-            "node_modules should be excluded, found: {:?}", paths);
+        assert!(
+            !paths.iter().any(|p| p.contains("node_modules")),
+            "node_modules should be excluded, found: {:?}",
+            paths
+        );
     }
 
     #[test]

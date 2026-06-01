@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Resolves import paths to absolute file paths or external modules.
+#[allow(dead_code)]
 pub struct PathResolver {
     root: PathBuf,
     aliases: HashMap<String, String>,
@@ -136,7 +137,10 @@ mod tests {
         let resolver = PathResolver::new("/project");
         let result = resolver.resolve("./utils", "src/services/UserService.ts");
         // From src/services/UserService.ts, ./utils resolves to src/services/utils
-        assert!(matches!(result, Resolution::Internal(_) | Resolution::Unresolved(_)));
+        assert!(matches!(
+            result,
+            Resolution::Internal(_) | Resolution::Unresolved(_)
+        ));
     }
 
     #[test]

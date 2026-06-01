@@ -6,3 +6,14 @@ build/
 .env
 .vscode/
 .idea/
+
+# Rust build artifacts
+**/target/
+
+# Local agent/runtime artifacts
+.pi/
+.pi-lens/
+.atl/
+
+# Local generated images
+ChatGPT Image *.png
