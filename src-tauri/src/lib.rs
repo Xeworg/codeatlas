@@ -63,6 +63,12 @@ fn main() {
             commands::get_impact_analysis,
             commands::get_graph_insights,
             commands::export_view,
+            commands::create_workspace,
+            commands::list_workspaces,
+            commands::attach_project_to_workspace,
+            commands::list_workspace_projects,
+            commands::create_snapshot,
+            commands::list_snapshots,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

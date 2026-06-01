@@ -184,6 +184,14 @@ import type {
   ExportPayload,
 } from './types'
 
+// MARK: v3 Workspace Commands
+
+import type {
+  Workspace,
+  WorkspaceProject,
+  Snapshot,
+} from './types-v3'
+
 // MARK: v2 Analysis Commands
 
 /**
@@ -236,15 +244,70 @@ export async function exportView(
   format: 'json' | 'png'
 ): Promise<ExportPayload> {
   try {
-    // JSON export is served by the backend.
-    // PNG export delegates to the frontend render pipeline (useExport hook).
     if (format === 'json') {
       return await invoke<ExportPayload>('export_view', { projectId, format })
     }
-    // PNG format is handled client-side by the useExport hook.
-    // This branch exists for protocol symmetry; callers should use
-    // the useExport hook for PNG exports.
     throw Object.assign(new Error('PNG format handled client-side'), { code: 'INTERNAL' })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+// MARK: v3 Workspace Commands
+
+export async function createWorkspace(name: string): Promise<Workspace> {
+  try {
+    return await invoke<Workspace>('create_workspace', { name })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function listWorkspaces(): Promise<Workspace[]> {
+  try {
+    return await invoke<Workspace[]>('list_workspaces')
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function attachProjectToWorkspace(
+  workspaceId: string,
+  projectId: string
+): Promise<void> {
+  try {
+    await invoke<void>('attach_project_to_workspace', { workspaceId, projectId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function listWorkspaceProjects(
+  workspaceId: string
+): Promise<WorkspaceProject[]> {
+  try {
+    return await invoke<WorkspaceProject[]>('list_workspace_projects', { workspaceId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+// ── Snapshot stubs (full payload capture in PR5) ─────────────────────────
+
+export async function createSnapshot(
+  projectId: string,
+  label: string
+): Promise<Snapshot> {
+  try {
+    return await invoke<Snapshot>('create_snapshot', { projectId, label })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function listSnapshots(projectId: string): Promise<Snapshot[]> {
+  try {
+    return await invoke<Snapshot[]>('list_snapshots', { projectId })
   } catch (e) {
     throw toApiError(e, 'INTERNAL')
   }

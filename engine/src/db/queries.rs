@@ -364,6 +364,111 @@ impl<'pool> ProjectRepository<'pool> {
             .optional()
         })
     }
+    // ──────────────────────────────────────────────────────────────
+    // v3: Workspaces
+    // ──────────────────────────────────────────────────────────────
+
+    /// Create a new workspace.
+    pub fn create_workspace(&self, name: &str) -> SqliteResult<(String, String, String)> {
+        self.pool.with_connection(|conn| {
+            let id = uuid::Uuid::new_v4().to_string();
+            let created_at = chrono::Utc::now().to_rfc3339();
+            conn.execute(
+                "INSERT INTO workspaces (id, name, created_at) VALUES (?1, ?2, ?3)",
+                params![id, name, created_at],
+            )?;
+            Ok((id, name.to_string(), created_at))
+        })
+    }
+
+    /// List all workspaces.
+    pub fn list_workspaces(&self) -> SqliteResult<Vec<(String, String, String)>> {
+        self.pool.with_connection(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT id, name, created_at FROM workspaces ORDER BY created_at DESC")?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            rows.collect()
+        })
+    }
+
+    /// Attach a project to a workspace.
+    pub fn attach_project_to_workspace(
+        &self,
+        workspace_id: &str,
+        project_id: &str,
+    ) -> SqliteResult<()> {
+        self.pool.with_connection(|conn| {
+            conn.execute(
+                "INSERT OR IGNORE INTO workspace_projects (workspace_id, project_id) VALUES (?1, ?2)",
+                params![workspace_id, project_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// List projects that belong to a workspace.
+    pub fn list_workspace_projects(
+        &self,
+        workspace_id: &str,
+    ) -> SqliteResult<Vec<(String, String)>> {
+        self.pool.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT workspace_id, project_id FROM workspace_projects WHERE workspace_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![workspace_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+            rows.collect()
+        })
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // v3: Snapshots (stub at PR1 — full payload capture in PR5)
+    // ──────────────────────────────────────────────────────────────
+
+    /// Create a snapshot with empty payload (stub for PR1).
+    /// Full payload capture implemented in PR5.
+    #[allow(clippy::type_complexity)]
+    pub fn create_snapshot(
+        &self,
+        project_id: &str,
+        label: &str,
+        workspace_id: Option<&str>,
+    ) -> SqliteResult<(String, String, Option<String>, String, String)> {
+        self.pool.with_connection(|conn| {
+            let id = uuid::Uuid::new_v4().to_string();
+            let created_at = chrono::Utc::now().to_rfc3339();
+            conn.execute(
+                "INSERT INTO snapshots (id, project_id, workspace_id, label, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, project_id, workspace_id, label, created_at],
+            )?;
+            Ok((id, project_id.to_string(), workspace_id.map(String::from), label.to_string(), created_at))
+        })
+    }
+
+    /// List snapshots for a project (stub — returns empty list until PR5).
+    #[allow(clippy::type_complexity)]
+    pub fn list_snapshots(
+        &self,
+        project_id: &str,
+    ) -> SqliteResult<Vec<(String, String, Option<String>, String, String)>> {
+        self.pool.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, project_id, workspace_id, label, created_at
+                 FROM snapshots WHERE project_id = ?1 ORDER BY created_at DESC",
+            )?;
+            let rows = stmt.query_map(params![project_id], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?;
+            rows.collect()
+        })
+    }
 }
 
 #[cfg(test)]
@@ -520,5 +625,82 @@ mod tests {
 
         let not_found = repo.get_file_by_id("nonexistent").unwrap();
         assert!(not_found.is_none());
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // v3: Workspace tests
+    // ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn workspace_create_and_list() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        let (id, name, created) = repo.create_workspace("Test Workspace").unwrap();
+        assert!(!id.is_empty());
+        assert_eq!(name, "Test Workspace");
+        assert!(!created.is_empty());
+
+        let workspaces = repo.list_workspaces().unwrap();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].1, "Test Workspace");
+    }
+
+    #[test]
+    fn workspace_attach_project() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        let (ws_id, _, _) = repo.create_workspace("WS1").unwrap();
+
+        // Must have project in DB first
+        repo.save_scan_result(&ScanResult {
+            project_id: "proj-ws-test".into(),
+            project_name: "WsTest".into(),
+            root_path: "/tmp/ws".into(),
+            files_count: 0,
+            symbols_count: 0,
+            imports_count: 0,
+            files: vec![],
+            scan_duration_ms: 0,
+            status: ScanStatus::Ready,
+            error: None,
+        }).unwrap();
+
+        repo.attach_project_to_workspace(&ws_id, "proj-ws-test").unwrap();
+
+        let projects = repo.list_workspace_projects(&ws_id).unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].1, "proj-ws-test");
+    }
+
+    #[test]
+    fn snapshot_create_and_list_stub() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        repo.save_scan_result(&ScanResult {
+            project_id: "proj-snap".into(),
+            project_name: "SnapTest".into(),
+            root_path: "/tmp/snap".into(),
+            files_count: 0,
+            symbols_count: 0,
+            imports_count: 0,
+            files: vec![],
+            scan_duration_ms: 0,
+            status: ScanStatus::Ready,
+            error: None,
+        }).unwrap();
+
+        let snap = repo.create_snapshot("proj-snap", "Baseline v1", None).unwrap();
+        assert!(!snap.0.is_empty());
+        assert_eq!(snap.1, "proj-snap");
+        assert_eq!(snap.3, "Baseline v1");
+
+        let snaps = repo.list_snapshots("proj-snap").unwrap();
+        assert_eq!(snaps.len(), 1);
     }
 }

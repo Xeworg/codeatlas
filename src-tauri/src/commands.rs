@@ -738,3 +738,128 @@ impl Default for ScanStatus {
         Self::Idle
     }
 }
+
+// MARK: v3 Workspace Commands
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceResponse {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceProjectResponse {
+    pub workspace_id: String,
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotResponse {
+    pub id: String,
+    pub project_id: String,
+    pub workspace_id: Option<String>,
+    pub label: String,
+    pub created_at: String,
+}
+
+#[tauri::command]
+pub fn create_workspace(name: String, state: State<'_, AppState>) -> Result<WorkspaceResponse, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let (id, name_out, created_at) =
+        repo.create_workspace(&name).map_err(|e| e.to_string())?;
+    Ok(WorkspaceResponse {
+        id,
+        name: name_out,
+        created_at,
+    })
+}
+
+#[tauri::command]
+pub fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<WorkspaceResponse>, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.list_workspaces()
+        .map_err(|e| e.to_string())
+        .map(|ws| {
+            ws.into_iter()
+                .map(|(id, name, created_at)| WorkspaceResponse {
+                    id,
+                    name,
+                    created_at,
+                })
+                .collect()
+        })
+}
+
+#[tauri::command]
+pub fn attach_project_to_workspace(
+    workspace_id: String,
+    project_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.attach_project_to_workspace(&workspace_id, &project_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_workspace_projects(
+    workspace_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<WorkspaceProjectResponse>, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.list_workspace_projects(&workspace_id)
+        .map_err(|e| e.to_string())
+        .map(|ps| {
+            ps.into_iter()
+                .map(|(workspace_id, project_id)| WorkspaceProjectResponse {
+                    workspace_id,
+                    project_id,
+                })
+                .collect()
+        })
+}
+
+// ── Snapshot stubs (full payload capture in PR5) ───────────────────────────
+
+#[tauri::command]
+pub fn create_snapshot(
+    project_id: String,
+    label: String,
+    state: State<'_, AppState>,
+) -> Result<SnapshotResponse, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let (id, project_id_out, workspace_id, label_out, created_at) =
+        repo.create_snapshot(&project_id, &label, None).map_err(|e| e.to_string())?;
+    Ok(SnapshotResponse {
+        id,
+        project_id: project_id_out,
+        workspace_id,
+        label: label_out,
+        created_at,
+    })
+}
+
+#[tauri::command]
+pub fn list_snapshots(
+    project_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SnapshotResponse>, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.list_snapshots(&project_id)
+        .map_err(|e| e.to_string())
+        .map(|snaps| {
+            snaps.into_iter()
+                .map(|(id, project_id, workspace_id, label, created_at)| SnapshotResponse {
+                    id,
+                    project_id,
+                    workspace_id,
+                    label,
+                    created_at,
+                })
+                .collect()
+        })
+}
