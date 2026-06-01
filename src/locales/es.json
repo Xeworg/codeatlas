@@ -1,0 +1,92 @@
+{
+  "common": {
+    "loading": "Cargando…",
+    "error": "Error",
+    "noData": "Sin datos disponibles",
+    "count": "{{count}} elemento(s)",
+    "view": "Vista:",
+    "beta": "beta",
+    "close": "Cerrar",
+    "cancel": "Cancelar",
+    "ok": "Aceptar",
+    "save": "Guardar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "search": "Buscar",
+    "filter": "Filtrar",
+    "reset": "Restablecer",
+    "export": "Exportar",
+    "exporting": "Exportando…",
+    "exportDone": "✓ Exportación completada",
+    "exportJson": "Exportar JSON",
+    "exportPng": "Exportar PNG",
+    "noArchitectureDetected": "Sin arquitectura detectada"
+  },
+  "architecture": {
+    "title": "Arquitectura detectada",
+    "evidence": "Evidencia",
+    "hideEvidence": "▲ Ocultar",
+    "showEvidence": "▶ Evidencia",
+    "filesCount": "{{count}} archivos",
+    "reasonsCount": "{{count}} razones",
+    "reasons": "Razones:",
+    "files": "Archivos:",
+    "confidence": "Confianza: {{value}}%",
+    "pattern": {
+      "mvc": "MVC",
+      "layered": "Layered",
+      "clean": "Clean Architecture",
+      "hexagonal": "Hexagonal / Ports & Adapters",
+      "unknown": "Sin arquitectura detectada"
+    }
+  },
+  "impact": {
+    "title": "Análisis de impacto",
+    "estimatedImpact": "Impacto estimado",
+    "noImpact": "Sin impacto — sin dependencias detectadas",
+    "affectedFiles": "{{count}} archivo(s) afectado(s)",
+    "path": "Camino de impacto"
+  },
+  "insights": {
+    "tabs": {
+      "cycles": "Ciclos",
+      "hotspots": "Hotspots",
+      "metrics": "Métricas"
+    },
+    "noCycles": "Sin ciclos de dependencias detectados",
+    "noHotspots": "Sin hotspots detectados",
+    "cycleNumber": "Ciclo #{{number}}",
+    "cycleNodes": "({{count}} nodos)",
+    "totalCycles": "Total ciclos",
+    "totalHotspots": "Total hotspots",
+    "avgCoupling": "Acoplamiento promedio",
+    "graphDensity": "Densidad del grafo",
+    "status": "Estado",
+    "statusOk": "OK",
+    "statusError": "Error",
+    "statusTimeout": "Timeout",
+    "couplingScore": "Puntuación de acoplamiento"
+  },
+  "views": {
+    "architecture": "Arquitectura",
+    "dependencies": "Dependencias",
+    "flowBeta": "Flujo",
+    "betaTag": "beta"
+  },
+  "export": {
+    "title": "Exportar análisis",
+    "jsonSuccess": "✓ Exportación completada",
+    "pngFallback": "No se pudo exportar como PNG ({{error}}). Exportando como JSON en su lugar.",
+    "noGraphFallback": "No se pudo capturar el grafo como imagen. Exportando como JSON en su lugar.",
+    "jsonError": "Error desconocido al exportar JSON",
+    "pngError": "Error desconocido al exportar PNG"
+  },
+  "errors": {
+    "updateRequired": "⚠️ Se requiere actualización para usar esta función",
+    "aiNotConfigured": "Configura tu clave API en Ajustes para usar el asistente IA",
+    "aiTimeout": "El asistente IA tardó demasiado. Intenta de nuevo.",
+    "dbWriteFailed": "No se pudo guardar en la base de datos. Verifica el espacio disponible.",
+    "scanFailed": "Error durante el escaneo del proyecto",
+    "graphLoadFailed": "Error al cargar el grafo de dependencias"
+  }
+}

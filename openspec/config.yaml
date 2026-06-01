@@ -14,8 +14,8 @@ sdd:
   strict_tdd: true
 
 scope:
-  active_version: v1
-  active_change: v1-mvp-core
+  active_version: v2
+  active_change: null
   included_languages:
     - TypeScript
     - JavaScript
@@ -45,12 +45,12 @@ ai:
 
 testing:
   runners:
-    rust_unit: "cargo test"
-    rust_integration: "cargo test -- --ignored"
-    rust_contracts: "cargo test -- contracts"
-    frontend_unit: "vitest"
-    frontend_lint: "npm run lint"
-    frontend_typecheck: "npm run typecheck"
+    rust_unit: 'cargo test'
+    rust_integration: 'cargo test -- --ignored'
+    rust_contracts: 'cargo test -- contracts'
+    frontend_unit: 'vitest'
+    frontend_lint: 'npm run lint'
+    frontend_typecheck: 'npm run typecheck'
   gates:
     - cargo fmt --check
     - cargo clippy -- -D warnings

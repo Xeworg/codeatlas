@@ -14,8 +14,6 @@ fn main() {
         )
         .init();
 
-    let state: Mutex<Option<AppState>> = Mutex::new(None);
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -31,18 +29,23 @@ fn main() {
                 .expect("Failed to open database");
 
             db_pool.init_schema().ok();
+            // Apply any pending v2 migrations on every startup (idempotent).
+            let migration_result = db_pool.with_connection(|conn| {
+                use codeatlas_lib::db::migrations::run_pending_migrations;
+                run_pending_migrations(conn)
+            });
+            if let Err(e) = migration_result {
+                tracing::warn!("Migration warning: {:?}", e);
+            }
 
             let app_state = AppState {
                 db: db_pool,
                 scan_status: Mutex::new(commands::ScanStatus::Idle),
                 ai_config: Mutex::new(None),
-                project_root: String::new(),
+                project_root: Mutex::new(String::new()),
             };
 
             app.manage(app_state);
-
-            let mut global_state = state.lock().unwrap();
-            *global_state = Some(app_state);
 
             Ok(())
         })
@@ -56,6 +59,10 @@ fn main() {
             commands::get_ai_config,
             commands::explain_node,
             commands::chat,
+            commands::get_architecture_detection,
+            commands::get_impact_analysis,
+            commands::get_graph_insights,
+            commands::export_view,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

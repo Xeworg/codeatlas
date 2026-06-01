@@ -205,7 +205,12 @@ impl<'pool> ProjectRepository<'pool> {
     }
 
     /// Search nodes (files) by name substring (case-insensitive).
-    pub fn search_files(&self, project_id: &str, query: &str, limit: usize) -> SqliteResult<Vec<FileInfo>> {
+    pub fn search_files(
+        &self,
+        project_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> SqliteResult<Vec<FileInfo>> {
         self.pool.with_connection(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, path, name, extension, lines
@@ -243,6 +248,117 @@ impl<'pool> ProjectRepository<'pool> {
                         lines: row.get::<_, i64>(4)? as u32,
                         symbols: vec![],
                     })
+                },
+            )
+            .optional()
+        })
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // v2: Architecture detection persistence
+    // ──────────────────────────────────────────────────────────────
+
+    /// Persist an architecture detection result.
+    pub fn save_architecture_detection(
+        &self,
+        project_id: &str,
+        pattern: &str,
+        confidence: f64,
+        evidence_json: &str,
+    ) -> SqliteResult<()> {
+        self.pool.with_connection(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO architecture_detections
+                 (id, project_id, pattern, confidence, evidence, detected_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    project_id,
+                    pattern,
+                    confidence,
+                    evidence_json,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Get the most recent architecture detection for a project.
+    pub fn get_latest_architecture_detection(
+        &self,
+        project_id: &str,
+    ) -> SqliteResult<Option<(String, f64, String, String)>> {
+        self.pool.with_connection(|conn| {
+            conn.query_row(
+                "SELECT pattern, confidence, evidence, detected_at
+                 FROM architecture_detections
+                 WHERE project_id = ?1
+                 ORDER BY detected_at DESC LIMIT 1",
+                params![project_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, f64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()
+        })
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // v2: Graph insights persistence
+    // ──────────────────────────────────────────────────────────────
+
+    /// Save graph insights for a project (upsert).
+    pub fn save_graph_insights(
+        &self,
+        project_id: &str,
+        cycles_json: &str,
+        hotspots_json: &str,
+        avg_coupling: Option<f64>,
+        density: Option<f64>,
+    ) -> SqliteResult<()> {
+        self.pool.with_connection(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO graph_insights
+                 (project_id, cycles, hotspots, avg_coupling, density, generated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+                params![
+                    project_id,
+                    cycles_json,
+                    hotspots_json,
+                    avg_coupling,
+                    density
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Get cached graph insights for a project (most recent).
+    #[allow(clippy::type_complexity)]
+    pub fn get_cached_graph_insights(
+        &self,
+        project_id: &str,
+    ) -> SqliteResult<Option<(String, String, f64, f64, String)>> {
+        self.pool.with_connection(|conn| {
+            conn.query_row(
+                "SELECT cycles, hotspots, avg_coupling, density, generated_at
+                 FROM graph_insights
+                 WHERE project_id = ?1
+                 ORDER BY generated_at DESC LIMIT 1",
+                params![project_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, f64>(2)?,
+                        row.get::<_, f64>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
                 },
             )
             .optional()
@@ -315,7 +431,8 @@ mod tests {
         pool.init_schema().unwrap();
         let repo = ProjectRepository::new(&pool);
 
-        repo.save_graph_cache("proj-1", r#"{"nodes":[],"edges":[]}"#).unwrap();
+        repo.save_graph_cache("proj-1", r#"{"nodes":[],"edges":[]}"#)
+            .unwrap();
         let cached = repo.get_graph_cache("proj-1").unwrap();
         assert!(cached.is_some());
         assert_eq!(cached.unwrap(), r#"{"nodes":[],"edges":[]}"#);

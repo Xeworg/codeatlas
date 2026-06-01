@@ -8,6 +8,7 @@ pub mod scanner;
 pub mod graph;
 pub mod ai;
 pub mod db;
+pub mod analysis;
 
 pub use models::{ScanResult, FileInfo, GraphData, NodeType, ScanStatus};
 pub use thiserror::Error;

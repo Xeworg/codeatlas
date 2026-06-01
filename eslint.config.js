@@ -27,6 +27,7 @@ export default [
         URL: 'readonly',
         URLSearchParams: 'readonly',
         HTMLElement: 'readonly',
+        Blob: 'readonly',
         Event: 'readonly',
         KeyboardEvent: 'readonly',
         MouseEvent: 'readonly',
@@ -36,6 +37,7 @@ export default [
         HTMLInputElement: 'readonly',
         HTMLDivElement: 'readonly',
         ChangeEvent: 'readonly',
+        Node: 'readonly',
       },
     },
     plugins: {

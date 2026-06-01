@@ -137,3 +137,48 @@ export type ErrorCode =
   | 'RATE_LIMITED'
   | 'TOKEN_LIMIT'
   | 'INTERNAL'
+
+// ===========================================================================
+// v2 Contract Types
+// ===========================================================================
+// Aligned with openspec/changes/v2-advanced-analysis/design.md §5
+// These types extend the v1 contract surface without modifying v1 fields.
+
+export type ArchitecturePattern = 'mvc' | 'layered' | 'clean' | 'hexagonal' | 'unknown'
+
+export interface ArchitectureDetectionResult {
+  version: '2.0'
+  pattern: ArchitecturePattern
+  confidence: number // 0..1
+  evidence: {
+    nodes: string[]
+    edges: Array<{ source: string; target: string; kind: string }>
+    reasons: string[]
+  } | null
+  generatedAt: string
+}
+
+export interface ImpactAnalysisResult {
+  version: '2.0'
+  changedNodeId: string
+  affectedNodes: string[]
+  impactScore: number // 0..1
+  explanation: string
+}
+
+export interface GraphInsights {
+  version: '2.0'
+  cycles: Array<{ nodes: string[]; length: number }>
+  hotspots: Array<{ nodeId: string; couplingScore: number; reason: string }>
+  avgCoupling: number | null
+  density: number | null
+  status?: 'ok' | 'timeout' | 'error'
+}
+
+export interface ExportPayload {
+  version: '2.0'
+  format: 'json' | 'png'
+  graphData: unknown
+  insights: GraphInsights | null
+  metadata: { projectId: string; generatedAt: string }
+}

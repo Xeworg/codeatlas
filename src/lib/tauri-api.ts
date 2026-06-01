@@ -175,10 +175,77 @@ export async function chat(
   }
 }
 
-export async function generateArchitectureSummary(projectId: string): Promise<{ summary: string }> {
+// MARK: v2 Analysis Commands
+
+import type {
+  ArchitectureDetectionResult,
+  ImpactAnalysisResult,
+  GraphInsights,
+  ExportPayload,
+} from './types'
+
+// MARK: v2 Analysis Commands
+
+/**
+ * Request architecture detection for a project.
+ * Returns the detected pattern, confidence score, and supporting evidence.
+ */
+export async function getArchitectureDetection(
+  projectId: string
+): Promise<ArchitectureDetectionResult> {
   try {
-    return await invoke<{ summary: string }>('generate_architecture_summary', { projectId })
+    return await invoke<ArchitectureDetectionResult>('get_architecture_detection', { projectId })
   } catch (e) {
-    throw toApiError(e)
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+/**
+ * Compute impact analysis for a specific node in the project graph.
+ * Returns the list of affected nodes and an impact score.
+ */
+export async function getImpactAnalysis(
+  projectId: string,
+  nodeId: string
+): Promise<ImpactAnalysisResult> {
+  try {
+    return await invoke<ImpactAnalysisResult>('get_impact_analysis', { projectId, nodeId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+/**
+ * Retrieve or compute graph insights (cycles, hotspots, coupling metrics)
+ * for the project. Results may be cached on the backend.
+ */
+export async function getGraphInsights(projectId: string): Promise<GraphInsights> {
+  try {
+    return await invoke<GraphInsights>('get_graph_insights', { projectId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+/**
+ * Export the current graph view as JSON or PNG.
+ * PNG generation is handled by the frontend with a fallback to JSON on failure.
+ */
+export async function exportView(
+  projectId: string,
+  format: 'json' | 'png'
+): Promise<ExportPayload> {
+  try {
+    // JSON export is served by the backend.
+    // PNG export delegates to the frontend render pipeline (useExport hook).
+    if (format === 'json') {
+      return await invoke<ExportPayload>('export_view', { projectId, format })
+    }
+    // PNG format is handled client-side by the useExport hook.
+    // This branch exists for protocol symmetry; callers should use
+    // the useExport hook for PNG exports.
+    throw Object.assign(new Error('PNG format handled client-side'), { code: 'INTERNAL' })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
   }
 }
