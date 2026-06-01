@@ -194,8 +194,7 @@ mod tests {
     fn context_respects_8kb_limit() {
         let large_code = "x".repeat(20_000);
         let graph = make_graph_with_deps(0, 0);
-        let context =
-            ContextBuilder::build_node_context(&large_code, "test.rs", &graph, "main");
+        let context = ContextBuilder::build_node_context(&large_code, "test.rs", &graph, "main");
         assert!(
             context.len() <= MAX_CONTEXT_BYTES,
             "Context {} bytes exceeds limit {}",
@@ -207,28 +206,37 @@ mod tests {
     #[test]
     fn context_includes_top_5_deps() {
         let graph = make_graph_with_deps(10, 0);
-        let context =
-            ContextBuilder::build_node_context("fn main() {}", "main.rs", &graph, "main");
+        let context = ContextBuilder::build_node_context("fn main() {}", "main.rs", &graph, "main");
 
         // Only the first 5 deps should appear in the context
         assert!(context.contains("dep0"), "dep0 should appear");
         assert!(context.contains("dep4"), "dep4 should appear (5th dep)");
-        assert!(!context.contains("dep5"), "dep5 should NOT appear (6th dep)");
+        assert!(
+            !context.contains("dep5"),
+            "dep5 should NOT appear (6th dep)"
+        );
         assert!(!context.contains("dep9"), "dep9 should NOT appear");
 
-        let dep_count = (0..10).filter(|i| context.contains(&format!("dep{}", i))).count();
+        let dep_count = (0..10)
+            .filter(|i| context.contains(&format!("dep{}", i)))
+            .count();
         assert_eq!(dep_count, MAX_DEPS);
     }
 
     #[test]
     fn context_includes_top_3_dependents() {
         let graph = make_graph_with_deps(0, 10);
-        let context =
-            ContextBuilder::build_node_context("fn main() {}", "main.rs", &graph, "main");
+        let context = ContextBuilder::build_node_context("fn main() {}", "main.rs", &graph, "main");
 
         assert!(context.contains("dependent0"), "dependent0 should appear");
-        assert!(context.contains("dependent2"), "dependent2 should appear (3rd)");
-        assert!(!context.contains("dependent3"), "dependent3 should NOT appear (4th)");
+        assert!(
+            context.contains("dependent2"),
+            "dependent2 should appear (3rd)"
+        );
+        assert!(
+            !context.contains("dependent3"),
+            "dependent3 should NOT appear (4th)"
+        );
 
         let dep_count = (0..10)
             .filter(|i| context.contains(&format!("dependent{}", i)))
@@ -239,12 +247,17 @@ mod tests {
     #[test]
     fn context_includes_node_metadata() {
         let graph = make_graph_with_deps(0, 0);
-        let context =
-            ContextBuilder::build_node_context("fn main() {}", "main.rs", &graph, "main");
+        let context = ContextBuilder::build_node_context("fn main() {}", "main.rs", &graph, "main");
 
         assert!(context.contains("src/main.rs"), "File path should appear");
-        assert!(context.contains("Dependencias"), "Deps section header should appear");
-        assert!(context.contains("Dependientes"), "Dependents section header should appear");
+        assert!(
+            context.contains("Dependencias"),
+            "Deps section header should appear"
+        );
+        assert!(
+            context.contains("Dependientes"),
+            "Dependents section header should appear"
+        );
         assert!(context.contains("Codigo"), "Code section should appear");
     }
 }

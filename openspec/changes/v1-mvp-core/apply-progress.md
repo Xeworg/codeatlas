@@ -22,18 +22,18 @@
 
 ### Completed Tasks
 
-| Task | Status | Notes |
-| ---- | ------ | -----|
-| T5a.1 AIProvider trait | ✅ | `engine/src/ai/provider.rs` — trait async completo |
-| T5a.2 Prompts (explain_node, chat) | ✅ | AnthropicProvider con prompts en español |
-| T5a.3 Contexto acotado (8KB + top-5 deps + top-3 dependents) | ✅ | `engine/src/ai/context.rs` con tests |
-| T5a.4 Anthropic provider (MiniMax) | ✅ | `engine/src/ai/anthropic.rs` — reqwest + error mapping |
-| T5a.5 Config IA en estado (Mut<Option<AIConfig>>) | ✅ | AppState + configure_ai/get_ai_config |
-| T5a.6 configure_ai Tauri command | ✅ | Guardado en AppState |
-| T5a.7 get_ai_config Tauri command | ✅ | Retorna config sin api_key |
-| T5a.8 explain_node Tauri command | ✅ | File→DB→content→ContextBuilder→AIProvider |
-| T5a.9 chat Tauri command | ✅ | Files→ContextBuilder→AIProvider |
-| T5a.10 Errores IA → AppError | ✅ | 401→InvalidApiKey, 429→AIRateLimited, 400→AITokenLimit, 5xx→AIUnavailable |
+| Task                                                         | Status | Notes                                                                     |
+| ------------------------------------------------------------ | ------ | ------------------------------------------------------------------------- |
+| T5a.1 AIProvider trait                                       | ✅     | `engine/src/ai/provider.rs` — trait async completo                        |
+| T5a.2 Prompts (explain_node, chat)                           | ✅     | AnthropicProvider con prompts en español                                  |
+| T5a.3 Contexto acotado (8KB + top-5 deps + top-3 dependents) | ✅     | `engine/src/ai/context.rs` con tests                                      |
+| T5a.4 Anthropic provider (MiniMax)                           | ✅     | `engine/src/ai/anthropic.rs` — reqwest + error mapping                    |
+| T5a.5 Config IA en estado (Mut<Option<AIConfig>>)            | ✅     | AppState + configure_ai/get_ai_config                                     |
+| T5a.6 configure_ai Tauri command                             | ✅     | Guardado en AppState                                                      |
+| T5a.7 get_ai_config Tauri command                            | ✅     | Retorna config sin api_key                                                |
+| T5a.8 explain_node Tauri command                             | ✅     | File→DB→content→ContextBuilder→AIProvider                                 |
+| T5a.9 chat Tauri command                                     | ✅     | Files→ContextBuilder→AIProvider                                           |
+| T5a.10 Errores IA → AppError                                 | ✅     | 401→InvalidApiKey, 429→AIRateLimited, 400→AITokenLimit, 5xx→AIUnavailable |
 
 ### Test Results
 
@@ -54,14 +54,14 @@ cargo clippy: clean
 
 ### TDD Cycle Evidence
 
-| Cycle | Phase | Evidence |
-| ----- | ----- | --------|
-| 1 | RED | Error mapping tests: expected AppError variants |
-| 2 | GREEN | Error mapping logic in anthropic.rs (401/403→InvalidApiKey, 429→AIRateLimited, 400→AITokenLimit, 5xx→AIUnavailable) |
-| 3 | GREEN | Context builder tests: 8KB limit + top-5 deps + top-3 dependents |
-| 4 | GREEN | explain_node wired: file→DB→disk→ContextBuilder→AnthropicProvider |
-| 5 | GREEN | chat wired: files→ContextBuilder→AnthropicProvider |
-| 6 | FINAL | AppState init with DbPool + project_root, all 32 Rust + 7 TS tests passing |
+| Cycle | Phase | Evidence                                                                                                            |
+| ----- | ----- | ------------------------------------------------------------------------------------------------------------------- |
+| 1     | RED   | Error mapping tests: expected AppError variants                                                                     |
+| 2     | GREEN | Error mapping logic in anthropic.rs (401/403→InvalidApiKey, 429→AIRateLimited, 400→AITokenLimit, 5xx→AIUnavailable) |
+| 3     | GREEN | Context builder tests: 8KB limit + top-5 deps + top-3 dependents                                                    |
+| 4     | GREEN | explain_node wired: file→DB→disk→ContextBuilder→AnthropicProvider                                                   |
+| 5     | GREEN | chat wired: files→ContextBuilder→AnthropicProvider                                                                  |
+| 6     | FINAL | AppState init with DbPool + project_root, all 32 Rust + 7 TS tests passing                                          |
 
 ### Files Changed
 

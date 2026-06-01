@@ -13,7 +13,11 @@ build/
 # Local agent/runtime artifacts
 .pi/
 .pi-lens/
+**/.pi-lens/
 .atl/
+
+# Generated folders/files
+src-tauri/gen/
 
 # Local generated images
 ChatGPT Image *.png

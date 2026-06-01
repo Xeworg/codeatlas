@@ -27,10 +27,8 @@ fn main() {
             std::fs::create_dir_all(&app_dir).ok();
 
             let db_path = app_dir.join("codeatlas.db");
-            let db_pool = engine::db::DbPool::new(
-                db_path.to_str().unwrap_or("codeatlas.db"),
-            )
-            .expect("Failed to open database");
+            let db_pool = engine::db::DbPool::new(db_path.to_str().unwrap_or("codeatlas.db"))
+                .expect("Failed to open database");
 
             db_pool.init_schema().ok();
 
