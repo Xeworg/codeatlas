@@ -31,6 +31,10 @@ export default [
         KeyboardEvent: 'readonly',
         MouseEvent: 'readonly',
         CustomEvent: 'readonly',
+        React: 'readonly',
+        JSX: 'readonly',
+        HTMLInputElement: 'readonly',
+        ChangeEvent: 'readonly',
       },
     },
     plugins: {
