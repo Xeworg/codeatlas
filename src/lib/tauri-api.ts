@@ -25,13 +25,25 @@ function toApiError(err: unknown, fallbackCode: ErrorCode = 'INTERNAL'): ApiErro
     code = 'ACCESS_DENIED'
   } else if (msg.includes('timeout') || msg.includes('TIMEOUT')) {
     code = 'SCAN_TIMEOUT'
-  } else if (msg.includes('401') || msg.includes('InvalidApiKey') || msg.includes('invalid_api_key')) {
+  } else if (
+    msg.includes('401') ||
+    msg.includes('InvalidApiKey') ||
+    msg.includes('invalid_api_key')
+  ) {
     code = 'INVALID_KEY'
   } else if (msg.includes('429') || msg.includes('rate_limit') || msg.includes('RATE_LIMITED')) {
     code = 'RATE_LIMITED'
-  } else if (msg.includes('TOKEN_LIMIT') || msg.includes('token_limit') || msg.includes('context_length')) {
+  } else if (
+    msg.includes('TOKEN_LIMIT') ||
+    msg.includes('token_limit') ||
+    msg.includes('context_length')
+  ) {
     code = 'TOKEN_LIMIT'
-  } else if (msg.includes('ECONNREFUSED') || msg.includes('UNREACHABLE') || msg.includes('network')) {
+  } else if (
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('UNREACHABLE') ||
+    msg.includes('network')
+  ) {
     code = 'UNREACHABLE'
   }
   return { code, message: msg }
@@ -163,9 +175,7 @@ export async function chat(
   }
 }
 
-export async function generateArchitectureSummary(
-  projectId: string
-): Promise<{ summary: string }> {
+export async function generateArchitectureSummary(projectId: string): Promise<{ summary: string }> {
   try {
     return await invoke<{ summary: string }>('generate_architecture_summary', { projectId })
   } catch (e) {

@@ -7,10 +7,10 @@ extern crate test;
 
 #[cfg(test)]
 mod benchmarks {
-    use test::Bencher;
-    use engine::{scanner::FileWalker, graph::GraphBuilder};
-    use engine::models::{FileInfo, NodeType};
     use engine::models::ImportInfo;
+    use engine::models::{FileInfo, NodeType};
+    use engine::{graph::GraphBuilder, scanner::FileWalker};
+    use test::Bencher;
 
     fn fixture_path() -> &'static str {
         // Point to the engine/fixtures test directory

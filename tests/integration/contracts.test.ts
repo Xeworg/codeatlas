@@ -134,7 +134,7 @@ describe('Tauri Contract Tests', () => {
         const { invoke } = await import('@tauri-apps/api/core')
         const config = await invoke<{ provider?: string; model?: string }>('get_ai_config')
         // api_key should not be in response
-        expect((config as Record<string, unknown>)).not.toHaveProperty('api_key')
+        expect(config as Record<string, unknown>).not.toHaveProperty('api_key')
       } catch {
         // Not in Tauri context — skip
       }

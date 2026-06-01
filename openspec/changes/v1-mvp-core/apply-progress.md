@@ -10,18 +10,18 @@
 
 ### Completed Tasks
 
-| Task                                          | Status | Notes                                                                                   |
-| --------------------------------------------- | ------ | --------------------------------------------------------------------------------------- |
-| T6.1 ApiError bridge TS                       | ✅     | `src/lib/types.ts` — ErrorCode (8 variantes) + ApiError shape                          |
-| T6.2 Error handling global in tauri-api.ts    | ✅     | `src/lib/tauri-api.ts` — toApiError() mapea errores a ApiError tipado en todos los wrappers |
-| T6.3 Loading/empty/error states en todos panels | ✅     | Todos los componentes ya tenían estados; verificados con error-handling.test.ts         |
-| T6.4 Medición de tiempos por etapa            | ✅     | `src-tauri/src/commands.rs` — Instant::now() para discover_ms, parse_ms, total_ms       |
-| T6.5 Contract tests de comandos Tauri          | ✅     | `tests/integration/contracts.test.ts` — 8 tests (graciosamente skipped fuera de Tauri) |
-| T6.6 Benchmark scaffolding                    | ✅     | `tests/benchmarks/bench_scan.rs` — bench_scan.rs con benchmarks informativos            |
-| T6.7 CI workflow                              | ✅     | `.github/workflows/ci.yml` — 6 jobs: lint, typecheck, rust, tests, build, timing      |
-| T6.8 CHANGELOG_CONTRATOS actualizado           | ✅     | `docs/CHANGELOG_CONTRATOS.md` — comandos v1.0, tipos error, métricas timing, estados UI |
-| T6.9 E2E manual checklist                     | ✅     | `tests/e2e/checklist.md` — 25 checks manuales (8 secciones funcionales + perf)          |
-| T6.10 Onboarding checklist                    | ✅     | Apéndice A en `docs/ESTANDARES_CODIGO_REUTILIZABLE_Y_ARQUITECTURA.md`                   |
+| Task                                            | Status | Notes                                                                                       |
+| ----------------------------------------------- | ------ | ------------------------------------------------------------------------------------------- |
+| T6.1 ApiError bridge TS                         | ✅     | `src/lib/types.ts` — ErrorCode (8 variantes) + ApiError shape                               |
+| T6.2 Error handling global in tauri-api.ts      | ✅     | `src/lib/tauri-api.ts` — toApiError() mapea errores a ApiError tipado en todos los wrappers |
+| T6.3 Loading/empty/error states en todos panels | ✅     | Todos los componentes ya tenían estados; verificados con error-handling.test.ts             |
+| T6.4 Medición de tiempos por etapa              | ✅     | `src-tauri/src/commands.rs` — Instant::now() para discover_ms, parse_ms, total_ms           |
+| T6.5 Contract tests de comandos Tauri           | ✅     | `tests/integration/contracts.test.ts` — 8 tests (graciosamente skipped fuera de Tauri)      |
+| T6.6 Benchmark scaffolding                      | ✅     | `tests/benchmarks/bench_scan.rs` — bench_scan.rs con benchmarks informativos                |
+| T6.7 CI workflow                                | ✅     | `.github/workflows/ci.yml` — 6 jobs: lint, typecheck, rust, tests, build, timing            |
+| T6.8 CHANGELOG_CONTRATOS actualizado            | ✅     | `docs/CHANGELOG_CONTRATOS.md` — comandos v1.0, tipos error, métricas timing, estados UI     |
+| T6.9 E2E manual checklist                       | ✅     | `tests/e2e/checklist.md` — 25 checks manuales (8 secciones funcionales + perf)              |
+| T6.10 Onboarding checklist                      | ✅     | Apéndice A en `docs/ESTANDARES_CODIGO_REUTILIZABLE_Y_ARQUITECTURA.md`                       |
 
 ### Test Results
 
@@ -41,35 +41,40 @@ cargo clippy -D warnings: clean
 ### Files Changed
 
 **Backend (Rust)**
+
 - `src-tauri/src/commands.rs` — ScanTiming struct, discover_ms/parse_ms/total_ms, tracing logging en get_graph
 - `tests/benchmarks/bench_scan.rs` — benchmark scaffolding (informativo)
 
 **Frontend (TypeScript)**
+
 - `src/lib/tauri-api.ts` — toApiError() global con mapeo de 8 códigos, fallback en cada wrapper
 - `tests/integration/contracts.test.ts` — 8 contract tests (graciosamente skipped fuera de Tauri window)
 - `tests/unit/error-handling.test.ts` — 11 tests: ErrorCode variants + UI states para todos los componentes
 
 **Docs**
+
 - `docs/CHANGELOG_CONTRATOS.md` — v1.0 completo: comandos, errores, timing, estados, testing
 - `docs/ESTANDARES_CODIGO_REUTILIZABLE_Y_ARQUITECTURA.md` — Apéndice A: onboarding checklist
 - `tests/e2e/checklist.md` — 25 checks E2E manuales
 
 **CI**
+
 - `.github/workflows/ci.yml` — 6 jobs: lint, typecheck, rust, tests, tauri-build, contract-tests, performance-baseline, scan-timing-report
 
 **Config**
-- `.gitignore` —追加 **/.pi-lens/ + src-tauri/gen/
+
+- `.gitignore` —追加 \*\*/.pi-lens/ + src-tauri/gen/
 
 ### TDD Cycle Evidence
 
-| Cycle | Phase | Evidence                                                                       |
-| ----- | ----- | ------------------------------------------------------------------------------ |
-| 1     | RED   | ErrorCode type test: 8 variantes                                                |
-| 2     | GREEN | toApiError() en tauri-api.ts: mapeo exhaustivo de errores a ErrorCode           |
-| 3     | GREEN | ScanTiming struct en commands.rs: discover_ms, parse_ms, total_ms               |
-| 4     | GREEN | contracts.test.ts: 8 tests de forma (graciosamente skipped fuera de Tauri)    |
-| 5     | GREEN | error-handling.test.ts: 11 tests para estados UI                               |
-| 6     | FINAL | CI workflow + E2E checklist + docs actualizados                                |
+| Cycle | Phase | Evidence                                                                   |
+| ----- | ----- | -------------------------------------------------------------------------- |
+| 1     | RED   | ErrorCode type test: 8 variantes                                           |
+| 2     | GREEN | toApiError() en tauri-api.ts: mapeo exhaustivo de errores a ErrorCode      |
+| 3     | GREEN | ScanTiming struct en commands.rs: discover_ms, parse_ms, total_ms          |
+| 4     | GREEN | contracts.test.ts: 8 tests de forma (graciosamente skipped fuera de Tauri) |
+| 5     | GREEN | error-handling.test.ts: 11 tests para estados UI                           |
+| 6     | FINAL | CI workflow + E2E checklist + docs actualizados                            |
 
 ### PR Boundary
 
