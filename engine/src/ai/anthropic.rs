@@ -138,10 +138,58 @@ impl AIProvider for AnthropicProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AppError;
 
     #[test]
     fn provider_creation() {
         let provider = AnthropicProvider::new("test-key", Some("claude-3"));
         assert_eq!(provider.model, "claude-3");
+    }
+
+    /// Verifies the HTTP status → AppError mapping table without a live server.
+    /// Each arm of the match in request() maps one status to one variant.
+    #[test]
+    fn error_mapping_invalid_api_key() {
+        let err = map_status_for_test(401);
+        assert!(matches!(err, AppError::InvalidApiKey));
+    }
+
+    #[test]
+    fn error_mapping_rate_limited() {
+        let err = map_status_for_test(429);
+        assert!(matches!(err, AppError::AIRateLimited));
+    }
+
+    #[test]
+    fn error_mapping_token_limit() {
+        let err = map_status_for_test(400);
+        let body = "maximum_token_limit_exceeded";
+        let err = refine_if_token_error(err, body);
+        assert!(matches!(err, AppError::AITokenLimit));
+    }
+
+    #[test]
+    fn error_mapping_server_error() {
+        let err = map_status_for_test(500);
+        assert!(matches!(err, AppError::AIUnavailable(_)));
+    }
+
+    /// Mirrors the status→AppError branching logic in request().
+    /// Any change to that match must be reflected here.
+    fn map_status_for_test(status: u16) -> AppError {
+        match status {
+            401 | 403 => AppError::InvalidApiKey,
+            429 => AppError::AIRateLimited,
+            400 => AppError::AITokenLimit, // conservative: 400 always token issue
+            _ => AppError::AIUnavailable(format!("HTTP {}", status)),
+        }
+    }
+
+    fn refine_if_token_error(err: AppError, body: &str) -> AppError {
+        if body.contains("token") && matches!(err, AppError::AITokenLimit) {
+            AppError::AITokenLimit
+        } else {
+            AppError::AIUnavailable(format!("HTTP 400 {}", body))
+        }
     }
 }

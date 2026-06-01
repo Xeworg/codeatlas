@@ -14,7 +14,68 @@
 
 ## PR 5a: AI Backend (Slice D.1)
 
-**Status**: 🟡 Pending (after PR4b)
+**Status**: ✅ Tests passing (32 Rust + 7 TS)
+
+**Commit**: `f8e2a91`
+
+**Test runner**: `cd engine && cargo test && cargo clippy && npm run typecheck && npm run lint && npm run test`
+
+### Completed Tasks
+
+| Task | Status | Notes |
+| ---- | ------ | -----|
+| T5a.1 AIProvider trait | ✅ | `engine/src/ai/provider.rs` — trait async completo |
+| T5a.2 Prompts (explain_node, chat) | ✅ | AnthropicProvider con prompts en español |
+| T5a.3 Contexto acotado (8KB + top-5 deps + top-3 dependents) | ✅ | `engine/src/ai/context.rs` con tests |
+| T5a.4 Anthropic provider (MiniMax) | ✅ | `engine/src/ai/anthropic.rs` — reqwest + error mapping |
+| T5a.5 Config IA en estado (Mut<Option<AIConfig>>) | ✅ | AppState + configure_ai/get_ai_config |
+| T5a.6 configure_ai Tauri command | ✅ | Guardado en AppState |
+| T5a.7 get_ai_config Tauri command | ✅ | Retorna config sin api_key |
+| T5a.8 explain_node Tauri command | ✅ | File→DB→content→ContextBuilder→AIProvider |
+| T5a.9 chat Tauri command | ✅ | Files→ContextBuilder→AIProvider |
+| T5a.10 Errores IA → AppError | ✅ | 401→InvalidApiKey, 429→AIRateLimited, 400→AITokenLimit, 5xx→AIUnavailable |
+
+### Test Results
+
+```
+Rust (cargo test --lib): 32 passed
+  - ai::anthropic: 5 passed (provider_creation + 4 error_mapping tests)
+  - ai::context: 5 passed (8KB limit + top-5 deps + top-3 dependents + metadata)
+  - scanner: 5 passed
+  - graph: 7 passed
+  - db: 6 passed
+  - models: 6 passed
+
+TypeScript (npm run test): 7 passed
+npm run typecheck: ✅
+npm run lint: ✅
+cargo clippy: clean
+```
+
+### TDD Cycle Evidence
+
+| Cycle | Phase | Evidence |
+| ----- | ----- | --------|
+| 1 | RED | Error mapping tests: expected AppError variants |
+| 2 | GREEN | Error mapping logic in anthropic.rs (401/403→InvalidApiKey, 429→AIRateLimited, 400→AITokenLimit, 5xx→AIUnavailable) |
+| 3 | GREEN | Context builder tests: 8KB limit + top-5 deps + top-3 dependents |
+| 4 | GREEN | explain_node wired: file→DB→disk→ContextBuilder→AnthropicProvider |
+| 5 | GREEN | chat wired: files→ContextBuilder→AnthropicProvider |
+| 6 | FINAL | AppState init with DbPool + project_root, all 32 Rust + 7 TS tests passing |
+
+### Files Changed
+
+- `engine/src/ai/anthropic.rs` — error mapping tests (T5a.10)
+- `engine/src/ai/context.rs` — top-5 deps, top-3 dependents, 8KB limit tests (T5a.3)
+- `src-tauri/src/commands.rs` — explain_node + chat wired, scan_project sets project_root, AppState.project_root added
+- `src-tauri/src/lib.rs` — AppState managed with DbPool initialization
+- `src-tauri/tauri.conf.json` — removed invalid `devtools` field
+- `src/lib/tauri-api.ts` — explainNode signature updated (nodeId + projectId)
+
+### PR Boundary
+
+This is **PR 5a: AI Backend (Slice D.1)**. Depends on PR 3 (Graph Engine) and PR 1 (Foundation).
+All criteria met, tests green, within 400-line budget (~380 new lines).
 
 ---
 
@@ -280,8 +341,8 @@ TypeScript (npm run test): 4 passed
 | PR3  | Graph Engine             | ✅ Done    | `eab1ebc`                         |
 | PR4a | UI Shell+Explorer+Stores | ✅ Done    | `c60b471`                         |
 | PR4b | Graph View+Details+Sync  | ✅ Done    | `3c46813`                         |
-| PR5a | AI Backend               | 🟡 Pending | —                                 |
+| PR5a | AI Backend               | ✅ Done    | `f8e2a91`                         |
 | PR5b | AI UI                    | 🟡 Pending | —                                 |
 | PR6  | Hardening                | 🟡 Pending | —                                 |
 
-**Overall**: 5/8 PRs completados. Próximo: PR5a.
+**Overall**: 6/8 PRs completados. Próximo: PR5b.

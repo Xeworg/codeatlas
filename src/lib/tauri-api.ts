@@ -73,8 +73,8 @@ export async function getAIConfig(): Promise<Omit<AIConfig, 'api_key'>> {
   return invoke<Omit<AIConfig, 'api_key'>>('get_ai_config')
 }
 
-export async function explainNode(nodeId: string, symbolId?: string): Promise<NodeExplanation> {
-  return invoke<NodeExplanation>('explain_node', { nodeId, symbolId })
+export async function explainNode(nodeId: string, projectId: string): Promise<NodeExplanation> {
+  return invoke<NodeExplanation>('explain_node', { nodeId, projectId })
 }
 
 export async function chat(

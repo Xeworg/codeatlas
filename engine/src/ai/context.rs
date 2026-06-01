@@ -130,50 +130,121 @@ impl ContextBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{GraphNode, NodeType};
+    use crate::models::{GraphEdge, GraphNode, NodeType};
+
+    fn make_graph_with_deps(num_deps: usize, num_dependents: usize) -> GraphData {
+        let mut nodes = vec![GraphNode {
+            id: "main".into(),
+            label: "main.rs".into(),
+            path: "src/main.rs".into(),
+            node_type: NodeType::Unknown,
+            symbol_count: 1,
+            position: None,
+        }];
+
+        let mut edges: Vec<GraphEdge> = vec![];
+
+        // Add dependencies (edges from main → dep)
+        for i in 0..num_deps {
+            let id = format!("dep{}", i);
+            nodes.push(GraphNode {
+                id: id.clone(),
+                label: format!("dep{}.rs", i),
+                path: format!("src/dep{}.rs", i),
+                node_type: NodeType::Unknown,
+                symbol_count: 1,
+                position: None,
+            });
+            edges.push(GraphEdge {
+                id: format!("e-dep-{}", i),
+                source: "main".into(),
+                target: id,
+                imports: vec![],
+            });
+        }
+
+        // Add dependents (edges from dep → main)
+        for i in 0..num_dependents {
+            let id = format!("dependent{}", i);
+            nodes.push(GraphNode {
+                id: id.clone(),
+                label: format!("dependent{}.rs", i),
+                path: format!("src/dependent{}.rs", i),
+                node_type: NodeType::Unknown,
+                symbol_count: 1,
+                position: None,
+            });
+            edges.push(GraphEdge {
+                id: format!("e-dnt-{}", i),
+                source: id,
+                target: "main".into(),
+                imports: vec![],
+            });
+        }
+
+        GraphData {
+            nodes,
+            edges,
+            project_id: "test".into(),
+            generated_at: "now".into(),
+        }
+    }
 
     #[test]
     fn context_respects_8kb_limit() {
         let large_code = "x".repeat(20_000);
-        let graph = GraphData {
-            nodes: vec![],
-            edges: vec![],
-            project_id: "test".into(),
-            generated_at: "now".into(),
-        };
-
-        let context = ContextBuilder::build_node_context(&large_code, "test.rs", &graph, "fake-id");
-        assert!(context.len() <= MAX_CONTEXT_BYTES);
+        let graph = make_graph_with_deps(0, 0);
+        let context =
+            ContextBuilder::build_node_context(&large_code, "test.rs", &graph, "main");
+        assert!(
+            context.len() <= MAX_CONTEXT_BYTES,
+            "Context {} bytes exceeds limit {}",
+            context.len(),
+            MAX_CONTEXT_BYTES
+        );
     }
 
     #[test]
-    fn context_includes_top_deps() {
-        let code = "fn main() {}";
-        let graph = GraphData {
-            nodes: vec![
-                GraphNode {
-                    id: "a".into(),
-                    label: "a.rs".into(),
-                    path: "a.rs".into(),
-                    node_type: NodeType::Unknown,
-                    symbol_count: 1,
-                    position: None,
-                },
-                GraphNode {
-                    id: "b".into(),
-                    label: "b.rs".into(),
-                    path: "b.rs".into(),
-                    node_type: NodeType::Unknown,
-                    symbol_count: 1,
-                    position: None,
-                },
-            ],
-            edges: vec![],
-            project_id: "test".into(),
-            generated_at: "now".into(),
-        };
+    fn context_includes_top_5_deps() {
+        let graph = make_graph_with_deps(10, 0);
+        let context =
+            ContextBuilder::build_node_context("fn main() {}", "main.rs", &graph, "main");
 
-        let context = ContextBuilder::build_node_context(code, "a.rs", &graph, "a");
-        assert!(context.contains("Dependencias"));
+        // Only the first 5 deps should appear in the context
+        assert!(context.contains("dep0"), "dep0 should appear");
+        assert!(context.contains("dep4"), "dep4 should appear (5th dep)");
+        assert!(!context.contains("dep5"), "dep5 should NOT appear (6th dep)");
+        assert!(!context.contains("dep9"), "dep9 should NOT appear");
+
+        let dep_count = (0..10).filter(|i| context.contains(&format!("dep{}", i))).count();
+        assert_eq!(dep_count, MAX_DEPS);
+    }
+
+    #[test]
+    fn context_includes_top_3_dependents() {
+        let graph = make_graph_with_deps(0, 10);
+        let context =
+            ContextBuilder::build_node_context("fn main() {}", "main.rs", &graph, "main");
+
+        assert!(context.contains("dependent0"), "dependent0 should appear");
+        assert!(context.contains("dependent2"), "dependent2 should appear (3rd)");
+        assert!(!context.contains("dependent3"), "dependent3 should NOT appear (4th)");
+
+        let dep_count = (0..10)
+            .filter(|i| context.contains(&format!("dependent{}", i)))
+            .count();
+        assert_eq!(dep_count, MAX_DEPENDENTS);
+    }
+
+    #[test]
+    fn context_includes_node_metadata() {
+        let graph = make_graph_with_deps(0, 0);
+        let context =
+            ContextBuilder::build_node_context("fn main() {}", "main.rs", &graph, "main");
+
+        assert!(context.contains("src/main.rs"), "File path should appear");
+        assert!(context.contains("Dependencias"), "Deps section header should appear");
+        assert!(context.contains("Dependientes"), "Dependents section header should appear");
+        assert!(context.contains("Codigo"), "Code section should appear");
     }
 }
