@@ -1,12 +1,15 @@
 //! CodeAtlas — Tauri entry point
-//! Registers commands and starts the application.
+//! Library run() used by main binary.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use codeatlas_lib::commands::{self, AppState};
-use std::sync::Mutex;
+mod commands;
 
-fn main() {
+use commands::AppState;
+use std::sync::Mutex;
+use tauri::Manager;
+
+pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -29,9 +32,8 @@ fn main() {
                 .expect("Failed to open database");
 
             db_pool.init_schema().ok();
-            // Apply any pending v2 migrations on every startup (idempotent).
             let migration_result = db_pool.with_connection(|conn| {
-                use codeatlas_lib::db::migrations::run_pending_migrations;
+                use engine::db::migrations::run_pending_migrations;
                 run_pending_migrations(conn)
             });
             if let Err(e) = migration_result {
@@ -46,7 +48,6 @@ fn main() {
             };
 
             app.manage(app_state);
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

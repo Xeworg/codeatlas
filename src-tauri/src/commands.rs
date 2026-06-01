@@ -8,9 +8,8 @@ use engine::{
     graph::{GraphBuilder, PathResolver},
     models::{ChatMessage, FileInfo, GraphData, NodeExplanation, ScanResult},
     scanner::{CodeParser, FileWalker},
-    AppError, Result,
 };
-use std::{sync::Mutex, time::Instant};
+use std::{path::Path, sync::Mutex, time::Instant};
 use tauri::State;
 
 // Global state
@@ -84,11 +83,11 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
                 if let Some(ref module) = imp.target_module {
                     let res = resolver.resolve(module, &file.relative_path);
                     match res {
-                        crate::graph::resolver::Resolution::Internal(p) => {
+                        engine::graph::resolver::Resolution::Internal(p) => {
                             imp.target_file_id = files.iter().find(|f| f.path == p).map(|f| f.id.clone());
                         }
-                        crate::graph::resolver::Resolution::External(_) => {}
-                        crate::graph::resolver::Resolution::Unresolved(_) => {}
+                        engine::graph::resolver::Resolution::External(_) => {}
+                        engine::graph::resolver::Resolution::Unresolved(_) => {}
                     }
                 }
                 imp
@@ -107,7 +106,7 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
     let result = ScanResult {
         project_id: uuid::Uuid::new_v4().to_string(),
         project_name: path.split('/').last().unwrap_or("Project").to_string(),
-        root_path: path,
+        root_path: path.clone(),
         files_count: files.len(),
         symbols_count,
         imports_count,
@@ -118,8 +117,9 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
     };
 
     // Persist
-    if let Ok(repo) = ProjectRepository::new(&state.db) {
-        let _ = repo.save_scan_result(&result);
+    let repo = ProjectRepository::new(&state.db);
+    if let Err(e) = repo.save_scan_result(&result) {
+        tracing::warn!("Failed to save scan result: {}", e);
     }
 
     {
@@ -160,7 +160,7 @@ pub fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusResponse,
 
 #[tauri::command]
 pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result<GraphData, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     let build_start = Instant::now();
 
     // Try to return cached graph first
@@ -197,7 +197,7 @@ pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result
 
 #[tauri::command]
 pub fn get_node_details(node_id: String, state: State<'_, AppState>) -> Result<FileInfo, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.get_file_by_id(&node_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("File not found: {}", node_id))
@@ -210,7 +210,7 @@ pub fn search_nodes(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<engine::models::GraphNode>, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     let limit = limit.unwrap_or(20);
 
     let files = repo
@@ -261,7 +261,7 @@ pub async fn explain_node(
 
     let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
 
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
 
     // Fetch file metadata from DB
     let file_info = repo
@@ -330,15 +330,13 @@ pub async fn chat(
 
     let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
 
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
 
     // Get project root
-    let project = repo
+    let (_, root, _) = repo
         .get_project(&project_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Project not found: {}", project_id))?;
-
-    let (project_name, root, _) = project;
     let root = if !root.is_empty() { root } else { root_path };
 
     // Fetch project files from DB
@@ -368,8 +366,15 @@ pub async fn chat(
             generated_at: chrono::Utc::now().to_rfc3339(),
         });
 
-    // Build chat context
-    let context = ContextBuilder::build_chat_context(&file_contents, &graph, &message);
+    // Build chat context (use &str refs — ContextBuilder::build_chat_context
+    // takes &[(&str, &str)], file_contents lifetime must outlive the call)
+    let context = {
+        let refs: Vec<(&str, &str)> = file_contents
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        ContextBuilder::build_chat_context(&refs, &graph, &message)
+    };
 
     // Add user message to history
     let mut full_history = history;
@@ -497,19 +502,18 @@ pub fn get_architecture_detection(
     );
 
     // Persist for future retrieval
-    if let Ok(repo) = ProjectRepository::new(&state.db) {
-        let evidence_json = result
-            .evidence
-            .as_ref()
-            .map(|e| serde_json::to_string(e).unwrap_or_default())
-            .unwrap_or_default();
-        let _ = repo.save_architecture_detection(
-            &project_id,
-            result.pattern.as_str(),
-            result.confidence,
-            &evidence_json,
-        );
-    }
+    let repo = ProjectRepository::new(&state.db);
+    let evidence_json = result
+        .evidence
+        .as_ref()
+        .map(|e| serde_json::to_string(e).unwrap_or_default())
+        .unwrap_or_default();
+    let _ = repo.save_architecture_detection(
+        &project_id,
+        result.pattern.as_str(),
+        result.confidence,
+        &evidence_json,
+    );
 
     Ok(result.into())
 }
@@ -562,22 +566,37 @@ pub fn get_graph_insights(
     );
 
     // Cache in DB
-    if let Ok(repo) = ProjectRepository::new(&state.db) {
-        let cycles_json = serde_json::to_string(&result.cycles).unwrap_or_default();
-        let hotspots_json = serde_json::to_string(&result.hotspots).unwrap_or_default();
-        let _ = repo.save_graph_insights(
-            &project_id,
-            &cycles_json,
-            &hotspots_json,
-            result.avg_coupling,
-            result.density,
-        );
-    }
+    let repo = ProjectRepository::new(&state.db);
+    let cycles_json = serde_json::to_string(&result.cycles).unwrap_or_default();
+    let hotspots_json = serde_json::to_string(&result.hotspots).unwrap_or_default();
+    let _ = repo.save_graph_insights(
+        &project_id,
+        &cycles_json,
+        &hotspots_json,
+        result.avg_coupling,
+        result.density,
+    );
 
     Ok(result.into())
 }
 
 // MARK: Export Commands
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPayloadResponse {
+    pub version: String,
+    pub format: String,
+    pub graph_data: serde_json::Value,
+    pub insights: Option<serde_json::Value>,
+    pub metadata: ExportMetadata,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExportMetadata {
+    pub project_id: String,
+    pub generated_at: String,
+}
 
 /// Export the current graph view and optional insights as a structured payload.
 /// - `json` format: backend serializes GraphData + GraphInsights into ExportPayload.
@@ -606,7 +625,7 @@ pub fn export_view(
         );
     }
 
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
 
     // Fetch cached graph data
     let graph_json = repo
@@ -627,7 +646,7 @@ pub fn export_view(
     let insights_json: Option<serde_json::Value> = repo
         .get_cached_graph_insights(&project_id)
         .map_err(|e| e.to_string())?
-        .map(|(cycles, hotspots, avg_coupling, density, generated_at)| {
+        .map(|(cycles, hotspots, avg_coupling, density, _): (String, String, f64, f64, String)| {
             serde_json::json!({
                 "version": "2.0",
                 "cycles": serde_json::from_str::<serde_json::Value>(&cycles).unwrap_or(serde_json::json!([])),
@@ -660,23 +679,6 @@ pub fn export_view(
     })
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportPayloadResponse {
-    pub version: String,
-    pub format: String,
-    pub graph_data: serde_json::Value,
-    pub insights: Option<serde_json::Value>,
-    pub metadata: ExportMetadata,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ExportMetadata {
-    pub project_id: String,
-    pub generated_at: String,
-}
-
-/// RED test: export_view command for 'json' format should return a valid ExportPayloadResponse.
 /// Expected to fail before T4.1 is implemented.
 #[cfg(test)]
 mod export_view_tests {
@@ -769,7 +771,7 @@ pub struct SnapshotResponse {
 
 #[tauri::command]
 pub fn create_workspace(name: String, state: State<'_, AppState>) -> Result<WorkspaceResponse, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     let (id, name_out, created_at) =
         repo.create_workspace(&name).map_err(|e| e.to_string())?;
     Ok(WorkspaceResponse {
@@ -781,7 +783,7 @@ pub fn create_workspace(name: String, state: State<'_, AppState>) -> Result<Work
 
 #[tauri::command]
 pub fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<WorkspaceResponse>, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.list_workspaces()
         .map_err(|e| e.to_string())
         .map(|ws| {
@@ -801,7 +803,7 @@ pub fn attach_project_to_workspace(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.attach_project_to_workspace(&workspace_id, &project_id)
         .map_err(|e| e.to_string())
 }
@@ -811,7 +813,7 @@ pub fn list_workspace_projects(
     workspace_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<WorkspaceProjectResponse>, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.list_workspace_projects(&workspace_id)
         .map_err(|e| e.to_string())
         .map(|ps| {
@@ -831,7 +833,7 @@ pub fn create_snapshot(
     workspace_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<SnapshotResponse, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     let (id, project_id_out, workspace_id_out, label_out, created_at, payload_json) =
         repo.create_snapshot(&project_id, &label, workspace_id.as_deref())
             .map_err(|e| e.to_string())?;
@@ -850,7 +852,7 @@ pub fn get_snapshot(
     snapshot_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<SnapshotResponse>, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.get_snapshot(&snapshot_id)
         .map_err(|e| e.to_string())
         .map(|opt| opt.map(|(id, project_id, workspace_id, label, created_at, payload_json)| {
@@ -881,7 +883,7 @@ pub fn add_comment(
     kind: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<AnnotationResponse, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     let (id, project_id_out, node_id_out, author_out, kind_out, text_out, created_at) =
         repo.add_comment(&project_id, &node_id, &author, &text, kind.as_deref())
             .map_err(|e| e.to_string())?;
@@ -902,22 +904,18 @@ pub fn list_comments(
     node_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<AnnotationResponse>, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.list_comments(&project_id, node_id.as_deref())
         .map_err(|e| e.to_string())
-        .map(|cs| {
-            cs.into_iter()
-                .map(|(id, project_id, node_id, author, kind, text, created_at)| AnnotationResponse {
-                    id,
-                    project_id,
-                    node_id,
-                    author,
-                    kind,
-                    text,
-                    created_at,
-                })
-                .collect()
-        })
+        .map(|cs| cs.into_iter().map(|r| AnnotationResponse {
+            id: r.0,
+            project_id: r.1,
+            node_id: r.2,
+            author: r.3,
+            kind: r.4,
+            text: r.5,
+            created_at: r.6,
+        }).collect())
 }
 
 
@@ -927,12 +925,12 @@ pub fn list_snapshots(
     workspace_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<SnapshotResponse>, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.list_snapshots(&project_id, workspace_id.as_deref())
         .map_err(|e| e.to_string())
         .map(|snaps| {
             snaps.into_iter()
-                .map(|(id, project_id, workspace_id, label, created_at, payload_json)| SnapshotResponse {
+                .map(|(id, project_id, workspace_id, label, created_at, payload_json): (String, String, Option<String>, String, String, Option<String>)| SnapshotResponse {
                     id,
                     project_id,
                     workspace_id,
@@ -970,13 +968,13 @@ pub fn get_health_timeline(
     to: String,
     state: State<'_, AppState>,
 ) -> Result<HealthTimelineResponse, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.get_health_timeline(&project_id, &from, &to)
         .map_err(|e| e.to_string())
         .map(|rows| HealthTimelineResponse {
             records: rows
                 .into_iter()
-                .map(|(id, recorded_at, overall_score, coupling_score, complexity_score, cycle_count, hotspot_count)| {
+                .map(|(id, recorded_at, overall_score, coupling_score, complexity_score, cycle_count, hotspot_count): (String, String, f64, f64, f64, i64, i64)| {
                     HealthRecordResponse {
                         id,
                         recorded_at,
@@ -1042,7 +1040,7 @@ pub fn get_executive_summary(
     workspace_id: String,
     state: State<'_, AppState>,
 ) -> Result<ExecutiveSummaryResponse, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.compute_executive_summary(&workspace_id)
         .map_err(|e| e.to_string())
         .map(|s| ExecutiveSummaryResponse {
@@ -1054,7 +1052,7 @@ pub fn get_executive_summary(
             top_hotspots: s
                 .top_hotspots
                 .into_iter()
-                .map(|(node_id, coupling_score)| HotspotItem {
+                .map(|(node_id, coupling_score): (String, f64)| HotspotItem {
                     node_id,
                     coupling_score,
                 })
@@ -1069,7 +1067,7 @@ pub fn compare_snapshots(
     target_snapshot_id: String,
     state: State<'_, AppState>,
 ) -> Result<SnapshotDiffResponse, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.compare_snapshots(&base_snapshot_id, &target_snapshot_id)
         .map_err(|e| e.to_string())
         .map(|d| SnapshotDiffResponse {
@@ -1092,7 +1090,7 @@ pub fn get_c4_view(
     level: u8,
     state: State<'_, AppState>,
 ) -> Result<C4ViewResponse, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.get_c4_view(&project_id, level)
         .map_err(|e| e.to_string())
         .map(|v| C4ViewResponse {
@@ -1102,4 +1100,3 @@ pub fn get_c4_view(
             warning: v.warning,
         })
 }
-
