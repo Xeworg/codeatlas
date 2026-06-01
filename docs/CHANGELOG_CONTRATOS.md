@@ -1,20 +1,30 @@
 # Changelog de Contratos API
 
-## v1.1 (planificado — post-MVP)
+## v1.1 (deferred to v3 — skipped in v1/v2 cycle)
 
 - `scan_project`: agregar campo opcional `exclude_patterns?: string[]`
 - `GraphNode`: agregar campo opcional `group?: string`
 - `chat`: agregar campo opcional `session_id?: string`
 - Nuevos comandos: `list_projects`, `delete_project`
 
-## v2.0 (planificado)
+> **Nota:** estos features no fueron priorizados en v1 ni v2. Planificados para v3.
 
-- `get_architecture_detection(projectId) → ArchitectureDetectionResult`
-- `get_impact_analysis(nodeId, direction) → ImpactAnalysisResult`
-- `get_graph_insights(projectId) → GraphInsights`
-- `GraphData`: agregar campo opcional `insights?: GraphInsights`
-- `export_view(projectId, format) → binary`
-- Nuevo `NodeType`: `middleware`, `guard`, `interceptor`
+## v2.0 (implementado — 2026-06-01, PR1–PR6 de v2-advanced-analysis)
+
+- `get_architecture_detection(projectId) → ArchitectureDetectionResult` — implementado en `architecture_detector.rs` + comando Tauri
+- `get_impact_analysis(projectId, nodeId) → ImpactAnalysisResult` — implementado en `impact_engine.rs` + comando Tauri
+- `get_graph_insights(projectId) → GraphInsights` — implementado en `graph_insights.rs` + comando Tauri
+- `get_export(projectId, format) → ExportPayload` — implementado en `export_view` + comando Tauri
+- `GraphData`: agrega campo opcional `insights?: GraphInsights`
+- Nuevo `NodeType` v2: `middleware`, `guard`, `interceptor`
+- Migración aditiva `003_architecture_and_insights.sql` — 6 tests de integración pasando
+- i18n foundation: `locales/es.json` (70+ keys) + helper `t()`
+
+**Excepciones aceptadas post-v2:**
+
+- NFR benchmarks: solo scaffold, sin mediciones reales en fixture
+- Degraded-mode: 4/8 escenarios backend cubiertos; 4 frontend/IA diferidos a hardening
+- App-level wiring (T5.6): componentes wire-ready pero no integrados en `App.tsx`
 
 ## v3.0 (planificado)
 
@@ -81,5 +91,5 @@
 
 ### Errores conocidos (v1.0)
 
-- `get_dependencies` y `get_dependents` no implementados en backend (reservados para v2)
-- `cancel_scan` no cancela realmente el scan (reservado para v2)
+- `get_dependencies` y `get_dependents` no implementados en backend (deferred a v3/backlog)
+- `cancel_scan` no cancela realmente el scan (deferred a v3/backlog)
