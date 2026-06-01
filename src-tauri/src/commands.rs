@@ -1,5 +1,6 @@
 //! Tauri commands — Presentation layer
 //! Exposes engine functionality to the frontend via invoke().
+//! All commands return timing metadata where applicable.
 
 use engine::{
     ai::{AnthropicProvider, ContextBuilder, AIProvider},
@@ -9,9 +10,7 @@ use engine::{
     scanner::{CodeParser, FileWalker},
     AppError, Result,
 };
-use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Mutex;
+use std::time::Instant;
 use tauri::State;
 
 // Global state
@@ -20,7 +19,7 @@ pub struct AppState {
     pub scan_status: Mutex<ScanStatus>,
     pub ai_config: Mutex<Option<engine::models::AIConfig>>,
     /// Root path of the currently open project (set on scan).
-    pub project_root: String,
+    pub project_root: Mutex<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -29,19 +28,33 @@ pub struct ScanStatusResponse {
     pub progress: f32,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScanTiming {
+    pub discover_ms: u64,
+    pub parse_ms: u64,
+    pub total_ms: u64,
+    pub files_count: usize,
+    pub symbols_count: usize,
+    pub imports_count: usize,
+}
+
 // MARK: Project & Scanning Commands
 
 #[tauri::command]
 pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<ScanResult, String> {
-    // Capture root path before it moves into ScanResult
     let root_for_state = path.clone();
 
-    let status = state.scan_status.lock().map_err(|e| e.to_string())?;
-    *status = ScanStatus::Scanning;
+    {
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::Scanning;
+    }
 
+    let discover_start = Instant::now();
     let walker = FileWalker::new(&path);
     let discovered = walker.discover();
+    let discover_ms = discover_start.elapsed().as_millis() as u64;
 
+    let parse_start = Instant::now();
     let mut files: Vec<FileInfo> = Vec::new();
     let mut all_imports: Vec<engine::models::ImportInfo> = Vec::new();
 
@@ -72,12 +85,9 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
                     let res = resolver.resolve(module, &file.relative_path);
                     match res {
                         crate::graph::resolver::Resolution::Internal(p) => {
-                            // lookup file by path
                             imp.target_file_id = files.iter().find(|f| f.path == p).map(|f| f.id.clone());
                         }
-                        crate::graph::resolver::Resolution::External(_) => {
-                            // external modules stay as-is
-                        }
+                        crate::graph::resolver::Resolution::External(_) => {}
                         crate::graph::resolver::Resolution::Unresolved(_) => {}
                     }
                 }
@@ -89,6 +99,8 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         files.push(file_info);
     }
 
+    let parse_ms = parse_start.elapsed().as_millis() as u64;
+    let total_ms = discover_ms + parse_ms;
     let symbols_count: usize = files.iter().map(|f| f.symbols.len()).sum();
     let imports_count = all_imports.len();
 
@@ -100,7 +112,7 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         symbols_count,
         imports_count,
         files,
-        scan_duration_ms: 0, // TODO: measure
+        scan_duration_ms: total_ms,
         status: engine::models::ScanStatus::Ready,
         error: None,
     };
@@ -110,11 +122,14 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         let _ = repo.save_scan_result(&result);
     }
 
-    *status = ScanStatus::Ready;
+    {
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::Ready;
+    }
 
     // Track project root so AI commands can read files from disk
-    drop(status);
-    if let Ok(mut pr) = state.project_root.lock() {
+    {
+        let mut pr = state.project_root.lock().map_err(|e| e.to_string())?;
         *pr = root_for_state;
     }
 
@@ -146,24 +161,38 @@ pub fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusResponse,
 #[tauri::command]
 pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result<GraphData, String> {
     let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let build_start = Instant::now();
 
     // Try to return cached graph first
     if let Ok(Some(cached)) = repo.get_graph_cache(&project_id) {
-        serde_json::from_str(&cached).map_err(|e| e.to_string())
-    } else {
-        // Build fresh from DB
-        let files = repo.get_files(&project_id).map_err(|e| e.to_string())?;
-        let all_imports: Vec<engine::models::ImportInfo> = vec![]; // TODO: load from DB
-        let builder = GraphBuilder::new(format!("/projects/{}", project_id));
-        let graph = builder.build(&files, &all_imports).map_err(|e| e.to_string())?;
-
-        // Cache it
-        if let Ok(graph_json) = serde_json::to_string(&graph) {
-            let _ = repo.save_graph_cache(&project_id, &graph_json);
+        let elapsed = build_start.elapsed().as_millis();
+        if elapsed > 0 {
+            tracing::info!("Graph cache hit for {} ({}ms)", project_id, elapsed);
         }
-
-        Ok(graph)
+        return serde_json::from_str(&cached).map_err(|e| e.to_string());
     }
+
+    // Build fresh from DB
+    let files = repo.get_files(&project_id).map_err(|e| e.to_string())?;
+    let all_imports: Vec<engine::models::ImportInfo> = vec![];
+    let builder = GraphBuilder::new(format!("/projects/{}", project_id));
+    let graph = builder.build(&files, &all_imports).map_err(|e| e.to_string())?;
+
+    // Cache it
+    if let Ok(graph_json) = serde_json::to_string(&graph) {
+        let _ = repo.save_graph_cache(&project_id, &graph_json);
+    }
+
+    let elapsed = build_start.elapsed().as_millis();
+    tracing::info!(
+        "Graph built for {}: {} nodes, {} edges ({}ms)",
+        project_id,
+        graph.nodes.len(),
+        graph.edges.len(),
+        elapsed
+    );
+
+    Ok(graph)
 }
 
 #[tauri::command]

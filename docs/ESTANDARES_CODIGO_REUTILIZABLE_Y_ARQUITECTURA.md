@@ -970,3 +970,57 @@ npm run build                    # build de producción
 ---
 
 *Documento vivo. Última actualización: 2026-05-31. Próxima revisión: cierre de v1 (GA).*
+
+---
+
+## Apéndice A — Onboarding Checklist (PR6 Hardening)
+
+### Primeros pasos para contribuir a CodeAtlas
+
+#### 1. Setup del entorno
+
+- [ ] Instalar Node.js 20+
+- [ ] Instalar Rust (stable) + `cargo`, `clippy`, `rustfmt`
+- [ ] En Linux: `sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`
+- [ ] `npm install`
+- [ ] `cargo build --package engine`
+
+#### 2. Verificación de compilación
+
+- [ ] `cargo fmt --check` (formato Rust)
+- [ ] `cargo clippy -- -D warnings` (lints Rust)
+- [ ] `cargo test --package engine` (32 tests)
+- [ ] `npm run typecheck` (tipos TS)
+- [ ] `npm run lint` (ESLint)
+- [ ] `npm run test` (7+ tests)
+
+#### 3. Correr la aplicación
+
+- [ ] `npm run tauri:dev` → abre ventana con UI vacía
+- [ ] Clic en "Open project" → selecciona carpeta con TS/JS/Rust
+- [ ] Verificar: scan → grafo → detalle → IA (si key configurada)
+
+#### 4. Workflow de desarrollo
+
+- [ ] Branch por feature: `git checkout -b feat/mi-feature`
+- [ ] `cargo test` + `npm run test` antes de commit
+- [ ] Commit convencional: `feat:`, `fix:`, `chore:`, `docs:`
+- [ ] PR con revisión + CI verde
+
+#### 5. Testing local
+
+- [ ] Tests de contrato: `npm run test -- tests/integration/contracts.test.ts`
+- [ ] E2E manual: seguir `tests/e2e/checklist.md`
+- [ ] Benchmarks: `cargo bench --package engine`
+
+### Checklist de Release v1
+
+- [ ] Todos los 8 PRs mergeados a main
+- [ ] CI verde: fmt + clippy + lint + test + typecheck + tauri-build
+- [ ] E2E checklist pasado
+- [ ] Performance dentro de umbrales (scan <10s, grafo <100ms)
+- [ ] Contratos API sincronizados en `docs/CHANGELOG_CONTRATOS.md`
+
+---
+
+*Actualizado: PR6 Hardening v1-mvp-core (2026-06-01)*

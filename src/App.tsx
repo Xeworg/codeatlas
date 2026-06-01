@@ -160,9 +160,7 @@ function App() {
                 activeTab={detailTab}
                 onChange={(id) => setDetailTab(id as DetailTab)}
               />
-              <div className="flex-1 overflow-y-auto">
-                {renderDetailContent()}
-              </div>
+              <div className="flex-1 overflow-y-auto">{renderDetailContent()}</div>
             </div>
           )}
         </div>

@@ -35,7 +35,11 @@ function getAIErrorMessage(err: Error): string {
   if (msg.includes('ECONNREFUSED') || msg.includes('UNREACHABLE') || msg.includes('network')) {
     return 'No se pudo conectar con el proveedor de IA. Verificá tu conexión.'
   }
-  if (msg.includes('TOKEN_LIMIT') || msg.includes('token_limit') || msg.includes('context_length')) {
+  if (
+    msg.includes('TOKEN_LIMIT') ||
+    msg.includes('token_limit') ||
+    msg.includes('context_length')
+  ) {
     return 'El contexto es demasiado largo. Intentá cerrar la conversación.'
   }
   return `Error de IA: ${msg.slice(0, 100)}`
@@ -103,9 +107,7 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
         <div>
           <h2 className="text-sm font-semibold text-gray-800">Chat Contextual</h2>
           {contextNodeIds.length > 0 && (
-            <p className="text-xs text-gray-500">
-              {contextNodeIds.length} nodo(s) en contexto
-            </p>
+            <p className="text-xs text-gray-500">{contextNodeIds.length} nodo(s) en contexto</p>
           )}
         </div>
       </div>
@@ -115,12 +117,8 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-gray-400 py-8">
             <span className="text-3xl mb-3">💬</span>
-            <p className="text-sm text-center px-4">
-              Preguntá sobre cualquier parte del proyecto.
-            </p>
-            <p className="text-xs text-gray-400 mt-1">
-              Ejemplo: "¿Qué hace AuthService?"
-            </p>
+            <p className="text-sm text-center px-4">Preguntá sobre cualquier parte del proyecto.</p>
+            <p className="text-xs text-gray-400 mt-1">Ejemplo: "¿Qué hace AuthService?"</p>
           </div>
         )}
 
@@ -137,10 +135,7 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
 
         {status === 'error' && errorMsg && (
           <div className="p-4">
-            <ErrorState
-              message={errorMsg}
-              onRetry={handleRetry}
-            />
+            <ErrorState message={errorMsg} onRetry={handleRetry} />
           </div>
         )}
 

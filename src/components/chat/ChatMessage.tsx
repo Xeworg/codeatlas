@@ -19,8 +19,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
           isUser
             ? 'bg-blue-600 text-white rounded-br-md'
             : isAssistant
-            ? 'bg-gray-100 text-gray-800 rounded-bl-md'
-            : 'bg-gray-50 text-gray-500 italic text-sm'
+              ? 'bg-gray-100 text-gray-800 rounded-bl-md'
+              : 'bg-gray-50 text-gray-500 italic text-sm'
         }`}
       >
         {/* Role badge for assistant */}
@@ -38,11 +38,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
         {/* Timestamp */}
         {message.timestamp && (
-          <p
-            className={`text-xs mt-1.5 ${
-              isUser ? 'text-blue-200' : 'text-gray-400'
-            }`}
-          >
+          <p className={`text-xs mt-1.5 ${isUser ? 'text-blue-200' : 'text-gray-400'}`}>
             {new Date(message.timestamp).toLocaleTimeString('es-AR', {
               hour: '2-digit',
               minute: '2-digit',

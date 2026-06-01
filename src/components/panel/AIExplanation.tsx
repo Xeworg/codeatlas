@@ -119,13 +119,9 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
         <div className="flex items-center gap-2">
           <span className="text-xl">🤖</span>
           <div>
-            <h3 className="text-sm font-semibold text-gray-800">
-              Explicación IA
-            </h3>
+            <h3 className="text-sm font-semibold text-gray-800">Explicación IA</h3>
             {nodeLabel && (
-              <p className="text-xs text-gray-500 truncate max-w-[200px]">
-                {nodeLabel}
-              </p>
+              <p className="text-xs text-gray-500 truncate max-w-[200px]">{nodeLabel}</p>
             )}
           </div>
         </div>
@@ -172,7 +168,9 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
             {QUICK_PROMPTS.map((prompt) => (
               <button
                 key={prompt}
-                onClick={() => {/* pass to chat context */}}
+                onClick={() => {
+                  /* pass to chat context */
+                }}
                 className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded border border-blue-100 hover:bg-blue-100 transition-colors"
               >
                 {prompt}

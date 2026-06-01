@@ -17,7 +17,11 @@ const SUGGESTIONS = [
   '¿Qué patrones de arquitectura usa este proyecto?',
 ]
 
-export function ChatInput({ onSend, disabled = false, placeholder = DEFAULT_PLACEHOLDER }: ChatInputProps) {
+export function ChatInput({
+  onSend,
+  disabled = false,
+  placeholder = DEFAULT_PLACEHOLDER,
+}: ChatInputProps) {
   const [value, setValue] = useState('')
 
   const handleSend = () => {

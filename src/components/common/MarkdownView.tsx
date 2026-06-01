@@ -20,8 +20,14 @@ function renderInlineMarkdown(text: string): string {
   return text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-gray-100 rounded text-sm font-mono text-purple-700">$1</code>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline hover:text-blue-800">$1</a>')
+    .replace(
+      /`([^`]+)`/g,
+      '<code class="px-1 py-0.5 bg-gray-100 rounded text-sm font-mono text-purple-700">$1</code>'
+    )
+    .replace(
+      /\[([^\]]+)\]\(([^)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline hover:text-blue-800">$1</a>'
+    )
 }
 
 export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
@@ -41,7 +47,9 @@ export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
 
   const flushBlockquote = () => {
     if (blockquoteLines.length > 0) {
-      elements.push(`<blockquote class="border-l-4 border-blue-300 pl-4 italic text-gray-600 my-2">${blockquoteLines.join(' ')}</blockquote>`)
+      elements.push(
+        `<blockquote class="border-l-4 border-blue-300 pl-4 italic text-gray-600 my-2">${blockquoteLines.join(' ')}</blockquote>`
+      )
       blockquoteLines = []
     }
   }
@@ -78,13 +86,19 @@ export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
     // Headings
     if (line.startsWith('### ')) {
       flushList()
-      elements.push(`<h3 class="text-base font-semibold mt-4 mb-2 text-gray-800">${renderInlineMarkdown(line.slice(4))}</h3>`)
+      elements.push(
+        `<h3 class="text-base font-semibold mt-4 mb-2 text-gray-800">${renderInlineMarkdown(line.slice(4))}</h3>`
+      )
     } else if (line.startsWith('## ')) {
       flushList()
-      elements.push(`<h2 class="text-lg font-bold mt-4 mb-2 text-gray-900">${renderInlineMarkdown(line.slice(3))}</h2>`)
+      elements.push(
+        `<h2 class="text-lg font-bold mt-4 mb-2 text-gray-900">${renderInlineMarkdown(line.slice(3))}</h2>`
+      )
     } else if (line.startsWith('# ')) {
       flushList()
-      elements.push(`<h1 class="text-xl font-bold mt-4 mb-2 text-gray-900">${renderInlineMarkdown(line.slice(2))}</h1>`)
+      elements.push(
+        `<h1 class="text-xl font-bold mt-4 mb-2 text-gray-900">${renderInlineMarkdown(line.slice(2))}</h1>`
+      )
     }
     // Blockquote
     else if (line.startsWith('> ')) {
@@ -111,7 +125,9 @@ export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
     else {
       flushList()
       if (line.trim()) {
-        elements.push(`<p class="text-gray-700 my-2 leading-relaxed">${renderInlineMarkdown(line)}</p>`)
+        elements.push(
+          `<p class="text-gray-700 my-2 leading-relaxed">${renderInlineMarkdown(line)}</p>`
+        )
       }
     }
   }

@@ -10,7 +10,11 @@ interface ApiKeySetupProps {
 }
 
 const PROVIDER_OPTIONS = [
-  { value: 'anthropic', label: 'Anthropic (Claude)', models: ['claude-sonnet-4-20250514', 'claude-3-5-haiku-20241007'] },
+  {
+    value: 'anthropic',
+    label: 'Anthropic (Claude)',
+    models: ['claude-sonnet-4-20250514', 'claude-3-5-haiku-20241007'],
+  },
   { value: 'custom', label: 'OpenAI Compatible', models: ['gpt-4o', 'gpt-4o-mini'] },
 ]
 
@@ -70,8 +74,8 @@ export function ApiKeySetup({ onConfigured, onSkip }: ApiKeySetupProps) {
         Configurá tu API Key de IA
       </h1>
       <p className="text-sm text-gray-500 text-center max-w-sm mb-8">
-        CodeAtlas usa IA para explicar código y responder preguntas. Tu key se guarda
-        de forma segura en el sistema, nunca se comparte.
+        CodeAtlas usa IA para explicar código y responder preguntas. Tu key se guarda de forma
+        segura en el sistema, nunca se comparte.
       </p>
 
       {/* Form */}
@@ -128,7 +132,9 @@ export function ApiKeySetup({ onConfigured, onSkip }: ApiKeySetupProps) {
             className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
           >
             {PROVIDER_OPTIONS.find((o) => o.value === provider)?.models.map((m) => (
-              <option key={m} value={m}>{m}</option>
+              <option key={m} value={m}>
+                {m}
+              </option>
             ))}
           </select>
         </div>
