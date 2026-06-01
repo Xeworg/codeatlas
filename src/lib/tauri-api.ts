@@ -186,7 +186,14 @@ import type {
 
 // MARK: v3 Workspace Commands
 
-import type { Workspace, WorkspaceProject, Snapshot } from './types-v3'
+import type {
+  Workspace,
+  WorkspaceProject,
+  Snapshot,
+  ExecutiveArchitectureSummary,
+  SnapshotDiffPayload,
+  C4ViewPayload,
+} from './types-v3'
 
 // MARK: v2 Analysis Commands
 
@@ -311,6 +318,105 @@ export async function getSnapshot(snapshotId: string): Promise<Snapshot | null> 
 export async function listSnapshots(projectId: string, workspaceId?: string): Promise<Snapshot[]> {
   try {
     return await invoke<Snapshot[]>('list_snapshots', { projectId, workspaceId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+// ── Annotations (PR6) ─────────────────────────────────────────────────────
+
+export interface Annotation {
+  id: string
+  projectId: string
+  nodeId: string
+  author: string
+  kind: 'comment' | 'todo' | 'review' | 'issue'
+  text: string
+  createdAt: string
+}
+
+export async function addComment(
+  projectId: string,
+  nodeId: string,
+  author: string,
+  text: string,
+  kind?: string
+): Promise<Annotation> {
+  try {
+    return await invoke<Annotation>('add_comment', { projectId, nodeId, author, text, kind })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function listComments(projectId: string, nodeId?: string): Promise<Annotation[]> {
+  try {
+    return await invoke<Annotation[]>('list_comments', { projectId, nodeId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export interface HealthTimeline {
+  records: HealthRecord[]
+  projectId: string
+  from: string
+  to: string
+}
+
+export interface HealthRecord {
+  id: string
+  recordedAt: string
+  overallScore: number
+  couplingScore: number
+  complexityScore: number
+  cycleCount: number
+  hotspotCount: number
+}
+
+export async function getHealthTimeline(
+  projectId: string,
+  from: string,
+  to: string
+): Promise<HealthTimeline> {
+  try {
+    return await invoke<HealthTimeline>('get_health_timeline', { projectId, from, to })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+// ========================================================================
+// H3 — Executive Summary + Diff + C4 Views
+// ========================================================================
+
+export async function getExecutiveSummary(
+  workspaceId: string
+): Promise<ExecutiveArchitectureSummary> {
+  try {
+    return await invoke<ExecutiveArchitectureSummary>('get_executive_summary', { workspaceId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function compareSnapshots(
+  baseSnapshotId: string,
+  targetSnapshotId: string
+): Promise<SnapshotDiffPayload> {
+  try {
+    return await invoke<SnapshotDiffPayload>('compare_snapshots', {
+      baseSnapshotId,
+      targetSnapshotId,
+    })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function getC4View(projectId: string, level: 1 | 2): Promise<C4ViewPayload> {
+  try {
+    return await invoke<C4ViewPayload>('get_c4_view', { projectId, level })
   } catch (e) {
     throw toApiError(e, 'INTERNAL')
   }

@@ -12,7 +12,7 @@
 use rusqlite::{Connection, Result as SqliteResult};
 
 /// Current schema version after all migrations are applied.
-pub const CURRENT_SCHEMA_VERSION: u32 = 4;
+pub const CURRENT_SCHEMA_VERSION: u32 = 6;
 
 /// Run all pending migrations on the given connection.
 /// Safe to call on every startup -- already-applied migrations are skipped.
@@ -71,6 +71,8 @@ fn load_migration_script(version: u32) -> Option<String> {
         2 => Some(INCLUDE_002.to_string()),
         3 => Some(INCLUDE_003.to_string()),
         4 => Some(INCLUDE_004.to_string()),
+        5 => Some(INCLUDE_005.to_string()),
+        6 => Some(INCLUDE_006.to_string()),
         _ => None,
     }
 }
@@ -115,6 +117,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
 "#;
 const INCLUDE_003: &str = include_str!("../../migrations/003_architecture_and_insights.sql");
 const INCLUDE_004: &str = include_str!("../../migrations/004_workspace_and_snapshots.sql");
+const INCLUDE_005: &str = include_str!("../../migrations/005_collaboration_annotations.sql");
+const INCLUDE_006: &str = include_str!("../../migrations/006_health_timeline.sql");
 
 #[cfg(test)]
 mod tests {
@@ -173,11 +177,11 @@ mod tests {
             "edge_type column must exist in imports after migration"
         );
 
-        // Verify user_version is 4 (after migration 003+004)
+        // Verify user_version is 6 (after migration 003+004+005+006)
         assert_eq!(
             get_schema_version(&conn),
-            4,
-            "schema version must be 4 after migration"
+            6,
+            "schema version must be 6 after migration"
         );
     }
 
@@ -283,7 +287,11 @@ mod tests {
         assert_eq!(get_schema_version(&conn), 1);
 
         run_pending_migrations(&conn).unwrap();
-        assert_eq!(get_schema_version(&conn), 4);
+        assert_eq!(
+            get_schema_version(&conn),
+            6,
+            "schema version must be 6 after migration"
+        );
 
         // workspaces table must exist
         let count: i64 = conn
@@ -331,11 +339,105 @@ mod tests {
     }
 
     #[test]
+    fn migration_006_adds_health_records_table() {
+        let conn = conn_with_v1_schema();
+        assert_eq!(get_schema_version(&conn), 1);
+
+        run_pending_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn), 6);
+
+        // health_records table must exist
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='health_records'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            count > 0,
+            "health_records table must exist after migration 006"
+        );
+
+        // Verify required columns
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(health_records)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        assert!(
+            cols.contains(&"project_id".into()),
+            "health_records.project_id required"
+        );
+        assert!(
+            cols.contains(&"overall_score".into()),
+            "health_records.overall_score required"
+        );
+        assert!(
+            cols.contains(&"coupling_score".into()),
+            "health_records.coupling_score required"
+        );
+        assert!(
+            cols.contains(&"cycle_count".into()),
+            "health_records.cycle_count required"
+        );
+        assert!(
+            cols.contains(&"hotspot_count".into()),
+            "health_records.hotspot_count required"
+        );
+
+        // Verify indexes
+        let idx_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name='health_records'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(idx_count >= 1, "health_records must have at least 1 index");
+    }
+
+    #[test]
     fn no_op_when_already_at_current_version() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute("PRAGMA user_version = 4", []).unwrap();
+        conn.execute("PRAGMA user_version = 6", []).unwrap();
         run_pending_migrations(&conn).unwrap();
-        assert_eq!(get_schema_version(&conn), 4);
+        assert_eq!(get_schema_version(&conn), 6);
+    }
+
+    #[test]
+    fn migration_005_adds_annotations_table() {
+        let conn = conn_with_v1_schema();
+        assert_eq!(get_schema_version(&conn), 1);
+
+        run_pending_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn), 6);
+
+        // annotations table must exist
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='annotations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            count > 0,
+            "annotations table must exist after migration 005"
+        );
+
+        // Verify indexes
+        let idx_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name='annotations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(idx_count >= 2, "annotations must have at least 2 indexes");
     }
 
     #[test]

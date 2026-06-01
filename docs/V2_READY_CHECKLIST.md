@@ -111,7 +111,7 @@ From `docs/ARQUITECTURA_DATOS_V2_V3.md` section 6, migration `003_architecture_a
 | GraphInsights fails                        | Return `{ cycles: [], hotspots: [], avgCoupling: null, density: null }`; log; continue    | Backend     | ✅     |
 | Tauri command version mismatch             | Show "Update required" banner; do not proceed with stale contract calls                   | Frontend    | ✅     |
 
-**Excepciones aceptadas:** Los 8 escenarios tienen test unitario. Los 4 escenarios backend están cubiertos en integración (`cargo test`). Los 4 escenarios frontend/IA están diferidos a hardening post-v2.
+**Excepciones aceptadas (estado histórico post-v2):** Los 8 escenarios tienen test unitario. Los 4 escenarios backend están cubiertos en integración (`cargo test`). Los 4 escenarios frontend/IA fueron cerrados en v3 H1 (PR3).
 
 ---
 

@@ -70,6 +70,12 @@ fn main() {
             commands::create_snapshot,
             commands::get_snapshot,
             commands::list_snapshots,
+            commands::add_comment,
+            commands::list_comments,
+            commands::get_health_timeline,
+            commands::get_executive_summary,
+            commands::compare_snapshots,
+            commands::get_c4_view,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

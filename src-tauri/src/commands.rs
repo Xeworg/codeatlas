@@ -858,6 +858,69 @@ pub fn get_snapshot(
         }))
 }
 
+// ─── Annotation commands ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnotationResponse {
+    pub id: String,
+    pub project_id: String,
+    pub node_id: String,
+    pub author: String,
+    pub kind: String,
+    pub text: String,
+    pub created_at: String,
+}
+
+#[tauri::command]
+pub fn add_comment(
+    project_id: String,
+    node_id: String,
+    author: String,
+    text: String,
+    kind: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<AnnotationResponse, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let (id, project_id_out, node_id_out, author_out, kind_out, text_out, created_at) =
+        repo.add_comment(&project_id, &node_id, &author, &text, kind.as_deref())
+            .map_err(|e| e.to_string())?;
+    Ok(AnnotationResponse {
+        id,
+        project_id: project_id_out,
+        node_id: node_id_out,
+        author: author_out,
+        kind: kind_out,
+        text: text_out,
+        created_at,
+    })
+}
+
+#[tauri::command]
+pub fn list_comments(
+    project_id: String,
+    node_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<AnnotationResponse>, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.list_comments(&project_id, node_id.as_deref())
+        .map_err(|e| e.to_string())
+        .map(|cs| {
+            cs.into_iter()
+                .map(|(id, project_id, node_id, author, kind, text, created_at)| AnnotationResponse {
+                    id,
+                    project_id,
+                    node_id,
+                    author,
+                    kind,
+                    text,
+                    created_at,
+                })
+                .collect()
+        })
+}
+
+
 #[tauri::command]
 pub fn list_snapshots(
     project_id: String,
@@ -880,3 +943,163 @@ pub fn list_snapshots(
                 .collect()
         })
 }
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HealthRecordResponse {
+    pub id: String,
+    pub recorded_at: String,
+    pub overall_score: f64,
+    pub coupling_score: f64,
+    pub complexity_score: f64,
+    pub cycle_count: i64,
+    pub hotspot_count: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HealthTimelineResponse {
+    pub records: Vec<HealthRecordResponse>,
+    pub project_id: String,
+    pub from: String,
+    pub to: String,
+}
+
+#[tauri::command]
+pub fn get_health_timeline(
+    project_id: String,
+    from: String,
+    to: String,
+    state: State<'_, AppState>,
+) -> Result<HealthTimelineResponse, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.get_health_timeline(&project_id, &from, &to)
+        .map_err(|e| e.to_string())
+        .map(|rows| HealthTimelineResponse {
+            records: rows
+                .into_iter()
+                .map(|(id, recorded_at, overall_score, coupling_score, complexity_score, cycle_count, hotspot_count)| {
+                    HealthRecordResponse {
+                        id,
+                        recorded_at,
+                        overall_score,
+                        coupling_score,
+                        complexity_score,
+                        cycle_count,
+                        hotspot_count,
+                    }
+                })
+                .collect(),
+            project_id,
+            from,
+            to,
+        })
+}
+
+// ========================================================================
+// H3 — Executive Summary + Diff + C4 Views
+// ========================================================================
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExecutiveSummaryResponse {
+    pub workspace_id: String,
+    pub total_projects: i64,
+    pub total_files: i64,
+    pub avg_health_score: Option<f64>,
+    pub trend: String,
+    pub top_hotspots: Vec<HotspotItem>,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HotspotItem {
+    pub node_id: String,
+    pub coupling_score: f64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SnapshotDiffResponse {
+    pub base_snapshot_id: String,
+    pub target_snapshot_id: String,
+    pub nodes_added: Vec<String>,
+    pub nodes_removed: Vec<String>,
+    pub nodes_modified: Vec<String>,
+    pub edges_added: Vec<String>,
+    pub edges_removed: Vec<String>,
+    pub coupling_delta: f64,
+    pub complexity_delta: f64,
+    pub cycles_delta: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct C4ViewResponse {
+    pub level: u8,
+    pub systems: Option<Vec<String>>,
+    pub containers: Option<Vec<String>>,
+    pub warning: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_executive_summary(
+    workspace_id: String,
+    state: State<'_, AppState>,
+) -> Result<ExecutiveSummaryResponse, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.compute_executive_summary(&workspace_id)
+        .map_err(|e| e.to_string())
+        .map(|s| ExecutiveSummaryResponse {
+            workspace_id: s.workspace_id,
+            total_projects: s.total_projects,
+            total_files: s.total_files,
+            avg_health_score: s.avg_health_score,
+            trend: s.trend,
+            top_hotspots: s
+                .top_hotspots
+                .into_iter()
+                .map(|(node_id, coupling_score)| HotspotItem {
+                    node_id,
+                    coupling_score,
+                })
+                .collect(),
+            generated_at: s.generated_at,
+        })
+}
+
+#[tauri::command]
+pub fn compare_snapshots(
+    base_snapshot_id: String,
+    target_snapshot_id: String,
+    state: State<'_, AppState>,
+) -> Result<SnapshotDiffResponse, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.compare_snapshots(&base_snapshot_id, &target_snapshot_id)
+        .map_err(|e| e.to_string())
+        .map(|d| SnapshotDiffResponse {
+            base_snapshot_id: d.base_snapshot_id,
+            target_snapshot_id: d.target_snapshot_id,
+            nodes_added: d.nodes_added,
+            nodes_removed: d.nodes_removed,
+            nodes_modified: d.nodes_modified,
+            edges_added: d.edges_added,
+            edges_removed: d.edges_removed,
+            coupling_delta: d.coupling_delta,
+            complexity_delta: d.complexity_delta,
+            cycles_delta: d.cycles_delta,
+        })
+}
+
+#[tauri::command]
+pub fn get_c4_view(
+    project_id: String,
+    level: u8,
+    state: State<'_, AppState>,
+) -> Result<C4ViewResponse, String> {
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.get_c4_view(&project_id, level)
+        .map_err(|e| e.to_string())
+        .map(|v| C4ViewResponse {
+            level: v.level,
+            systems: v.systems,
+            containers: v.containers,
+            warning: v.warning,
+        })
+}
+

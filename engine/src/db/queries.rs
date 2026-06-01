@@ -596,6 +596,502 @@ impl<'pool> ProjectRepository<'pool> {
             Ok(rows)
         })
     }
+
+    // ─── Annotation / Comment queries ──────────────────────────────────────────
+
+    /// Add a new annotation to a node. Returns (id, project_id, node_id, author, kind, text, created_at).
+    pub fn add_comment(
+        &self,
+        project_id: &str,
+        node_id: &str,
+        author: &str,
+        text: &str,
+        kind: Option<&str>,
+    ) -> SqliteResult<(String, String, String, String, String, String, String)> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let kind = kind.unwrap_or("comment");
+        self.pool.with_connection(|conn| {
+            conn.execute(
+                "INSERT INTO annotations (id, project_id, node_id, author, kind, text, created_at)\n                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id, project_id, node_id, author, kind, text, created_at],
+            )?;
+            Ok((
+                id,
+                project_id.to_string(),
+                node_id.to_string(),
+                author.to_string(),
+                kind.to_string(),
+                text.to_string(),
+                created_at,
+            ))
+        })
+    }
+
+    /// List annotations filtered by project_id and optionally node_id.
+    #[allow(clippy::type_complexity)]
+    pub fn list_comments(
+        &self,
+        project_id: &str,
+        node_id: Option<&str>,
+    ) -> SqliteResult<Vec<(String, String, String, String, String, String, String)>> {
+        self.pool.with_connection(|conn| {
+            if let Some(n) = node_id {
+                let mut stmt = conn.prepare(
+                    "SELECT id, project_id, node_id, author, kind, text, created_at\n                     FROM annotations WHERE project_id = ?1 AND node_id = ?2\n                     ORDER BY created_at ASC"
+                )?;
+                return stmt.query_map(params![project_id, n], |row| {
+                    Ok((
+                        row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
+                        row.get(4)?, row.get(5)?, row.get(6)?,
+                    ))
+                }).and_then(|rows| rows.collect());
+            }
+            let mut stmt = conn.prepare(
+                "SELECT id, project_id, node_id, author, kind, text, created_at\n                 FROM annotations WHERE project_id = ?1\n                 ORDER BY created_at ASC"
+            )?;
+            stmt.query_map(params![project_id], |row| {
+                Ok((
+                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
+                    row.get(4)?, row.get(5)?, row.get(6)?,
+                ))
+            }).and_then(|rows| rows.collect())
+        })
+    }
+
+    /// Delete an annotation by id. Returns true if a row was removed.
+    pub fn delete_comment(&self, comment_id: &str) -> SqliteResult<bool> {
+        self.pool.with_connection(|conn| {
+            let affected =
+                conn.execute("DELETE FROM annotations WHERE id = ?1", params![comment_id])?;
+            Ok(affected > 0)
+        })
+    }
+
+    // ========================================================================
+    // H3 — Health Timeline
+    // ========================================================================
+
+    /// Persist a health record. Returns (id, recorded_at) of the inserted row.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_health_record(
+        &self,
+        project_id: &str,
+        workspace_id: Option<&str>,
+        overall_score: f64,
+        coupling_score: f64,
+        complexity_score: f64,
+        cycle_count: i64,
+        hotspot_count: i64,
+    ) -> SqliteResult<(String, String)> {
+        self.pool.with_connection(|conn| {
+            let id = uuid::Uuid::new_v4().to_string();
+            let recorded_at = chrono::Utc::now().to_rfc3339();
+
+            conn.execute(
+                "INSERT INTO health_records \
+                 (id, workspace_id, project_id, recorded_at, \
+                  overall_score, coupling_score, complexity_score, \
+                  cycle_count, hotspot_count) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    id,
+                    workspace_id,
+                    project_id,
+                    recorded_at,
+                    overall_score,
+                    coupling_score,
+                    complexity_score,
+                    cycle_count,
+                    hotspot_count
+                ],
+            )?;
+            Ok((id, recorded_at))
+        })
+    }
+
+    /// Retrieve health timeline for a project within a date range.
+    /// Returns rows ordered by recorded_at ascending.
+    #[allow(clippy::type_complexity)]
+    pub fn get_health_timeline(
+        &self,
+        project_id: &str,
+        from: &str,
+        to: &str,
+    ) -> SqliteResult<Vec<(String, String, f64, f64, f64, i64, i64)>> {
+        self.pool.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, recorded_at, overall_score, coupling_score, \
+                 complexity_score, cycle_count, hotspot_count \
+                 FROM health_records \
+                 WHERE project_id = ?1 \
+                   AND recorded_at >= ?2 AND recorded_at <= ?3 \
+                 ORDER BY recorded_at ASC",
+            )?;
+
+            let rows = stmt
+                .query_map(params![project_id, from, to], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
+                        row.get::<_, Option<f64>>(3)?.unwrap_or(0.0),
+                        row.get::<_, Option<f64>>(4)?.unwrap_or(0.0),
+                        row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                        row.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                    ))
+                })
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
+            Ok(rows)
+        })
+    }
+    // ========================================================================
+    // H3 — Executive Summary + Diff + C4 Views
+    // ========================================================================
+
+    /// Compute executive summary for a workspace: project count, file count,
+    /// average health score, trend, and top hotspots.
+    pub fn compute_executive_summary(&self, workspace_id: &str) -> SqliteResult<ExecutiveSummary> {
+        self.pool.with_connection(|conn| {
+            // Count projects attached to this workspace
+            let total_projects: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM workspace_projects WHERE workspace_id = ?1",
+                    params![workspace_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            // Count files across all projects in workspace
+            let total_files: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(SUM(f.files_count), 0) \
+                     FROM files f \
+                     JOIN workspace_projects wp ON wp.project_id = f.project_id \
+                     WHERE wp.workspace_id = ?1",
+                    params![workspace_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            // Fetch health records for workspace (ordered by recorded_at)
+            let mut stmt = conn.prepare(
+                "SELECT overall_score FROM health_records \
+                 WHERE workspace_id = ?1 \
+                 ORDER BY recorded_at ASC",
+            )?;
+            let records: Vec<f64> = stmt
+                .query_map(params![workspace_id], |row| row.get(0))
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
+
+            let avg_health_score = if records.is_empty() {
+                None
+            } else {
+                Some(records.iter().sum::<f64>() / records.len() as f64)
+            };
+
+            // Trend: compare last two records' overall scores
+            let trend = if records.len() >= 2 {
+                let last = records[records.len() - 1];
+                let prev = records[records.len() - 2];
+                if last - prev > 5.0 {
+                    "up"
+                } else if prev - last > 5.0 {
+                    "down"
+                } else {
+                    "stable"
+                }
+            } else {
+                "stable"
+            };
+
+            // Top hotspots: nodes with highest coupling score from latest health record
+            let top_hotspots: Vec<(String, f64)> = conn
+                .prepare(
+                    "SELECT node_id, coupling_score FROM health_records \
+                     WHERE workspace_id = ?1 \
+                     ORDER BY recorded_at DESC LIMIT 5",
+                )
+                .ok()
+                .map(|mut stmt| {
+                    stmt.query_map(params![workspace_id], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                    })
+                    .unwrap()
+                    .filter_map(|r| r.ok())
+                    .collect()
+                })
+                .unwrap_or_default();
+
+            Ok(ExecutiveSummary {
+                workspace_id: workspace_id.to_string(),
+                total_projects,
+                total_files,
+                avg_health_score,
+                trend: trend.to_string(),
+                top_hotspots,
+                generated_at: chrono::Utc::now().to_rfc3339(),
+            })
+        })
+    }
+
+    /// Compare two snapshots and return diff payload.
+    /// If either snapshot does not exist, returns empty diff (zero deltas, empty lists).
+    pub fn compare_snapshots(
+        &self,
+        base_snapshot_id: &str,
+        target_snapshot_id: &str,
+    ) -> SqliteResult<SnapshotDiff> {
+        self.pool.with_connection(|conn| {
+            // Load payloads
+            let base_payload = conn
+                .query_row(
+                    "SELECT payload_json FROM snapshots WHERE id = ?1",
+                    params![base_snapshot_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str::<SnapshotPayloadRaw>(&s).ok());
+
+            let target_payload = conn
+                .query_row(
+                    "SELECT payload_json FROM snapshots WHERE id = ?1",
+                    params![target_snapshot_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str::<SnapshotPayloadRaw>(&s).ok());
+
+            match (base_payload, target_payload) {
+                (Some(base), Some(target)) => {
+                    let base_nodes: std::collections::HashSet<_> =
+                        base.nodes.iter().map(|n| n.id.clone()).collect();
+                    let target_nodes: std::collections::HashSet<_> =
+                        target.nodes.iter().map(|n| n.id.clone()).collect();
+
+                    let nodes_added: Vec<String> =
+                        target_nodes.difference(&base_nodes).cloned().collect();
+                    let nodes_removed: Vec<String> =
+                        base_nodes.difference(&target_nodes).cloned().collect();
+
+                    let base_edges: std::collections::HashSet<_> =
+                        base.edges.iter().cloned().collect();
+                    let target_edges: std::collections::HashSet<_> =
+                        target.edges.iter().cloned().collect();
+
+                    let edges_added: Vec<String> =
+                        target_edges.difference(&base_edges).cloned().collect();
+                    let edges_removed: Vec<String> =
+                        base_edges.difference(&target_edges).cloned().collect();
+
+                    let coupling_delta =
+                        target.avg_coupling.unwrap_or(0.0) - base.avg_coupling.unwrap_or(0.0);
+                    let complexity_delta =
+                        target.avg_complexity.unwrap_or(0.0) - base.avg_complexity.unwrap_or(0.0);
+                    let cycles_delta = target.cycle_count.unwrap_or(0) as f64
+                        - base.cycle_count.unwrap_or(0) as f64;
+
+                    Ok(SnapshotDiff {
+                        base_snapshot_id: base_snapshot_id.to_string(),
+                        target_snapshot_id: target_snapshot_id.to_string(),
+                        nodes_added,
+                        nodes_removed,
+                        nodes_modified: vec![],
+                        edges_added,
+                        edges_removed,
+                        coupling_delta,
+                        complexity_delta,
+                        cycles_delta: cycles_delta as i64,
+                    })
+                }
+                _ => {
+                    // One or both snapshots not found — return empty diff
+                    Ok(SnapshotDiff {
+                        base_snapshot_id: base_snapshot_id.to_string(),
+                        target_snapshot_id: target_snapshot_id.to_string(),
+                        nodes_added: vec![],
+                        nodes_removed: vec![],
+                        nodes_modified: vec![],
+                        edges_added: vec![],
+                        edges_removed: vec![],
+                        coupling_delta: 0.0,
+                        complexity_delta: 0.0,
+                        cycles_delta: 0,
+                    })
+                }
+            }
+        })
+    }
+
+    /// Return a C4 view payload for a project/snapshot.
+    /// Level 1 = System Context, Level 2 = Container.
+    /// Returns error for invalid levels (< 1 or > 2).
+    pub fn get_c4_view(&self, project_id: &str, level: u8) -> SqliteResult<C4View> {
+        if !(1..=2).contains(&level) {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "level must be 1 or 2".to_string(),
+            ));
+        }
+
+        self.pool.with_connection(|conn| {
+            // Load latest snapshot for project to derive C4 representation
+            let payload_opt = conn
+                .query_row(
+                    "SELECT payload_json FROM snapshots \
+                     WHERE project_id = ?1 \
+                     ORDER BY created_at DESC LIMIT 1",
+                    params![project_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str::<SnapshotPayloadRaw>(&s).ok());
+
+            match (payload_opt, level) {
+                (_, 0_u8..=0_u8) | (_, 3_u8..=u8::MAX) => {
+                    unreachable!("level is validated before this match")
+                }
+                (Some(payload), 1) => {
+                    // System Context: derive systems from node types or snapshot graph
+                    let systems: Vec<String> = payload
+                        .nodes
+                        .iter()
+                        .filter(|n| n.node_type == "service" || n.node_type == "repository")
+                        .map(|n| n.label.clone())
+                        .take(10)
+                        .collect();
+                    let is_empty = systems.is_empty();
+                    Ok(C4View {
+                        level: 1,
+                        systems: Some(if is_empty {
+                            vec!["CodeAtlas Application".to_string()]
+                        } else {
+                            systems
+                        }),
+                        containers: None,
+                        warning: if is_empty {
+                            Some("Limited data for C4 L1; showing system placeholder.".to_string())
+                        } else {
+                            None
+                        },
+                    })
+                }
+                (Some(payload), 2) => {
+                    // Container: derive containers from node labels and paths
+                    let containers: Vec<String> = payload
+                        .nodes
+                        .iter()
+                        .map(|n| {
+                            // Derive container name from path segments (first two after root)
+                            n.path
+                                .split('/')
+                                .skip(1)
+                                .take(2)
+                                .collect::<Vec<_>>()
+                                .join("/")
+                        })
+                        .filter(|s| !s.is_empty())
+                        .collect::<std::collections::HashSet<_>>()
+                        .into_iter()
+                        .take(20)
+                        .collect();
+                    Ok(C4View {
+                        level: 2,
+                        systems: None,
+                        containers: if containers.is_empty() {
+                            Some(vec!["No container data available".to_string()])
+                        } else {
+                            Some(containers)
+                        },
+                        warning: None,
+                    })
+                }
+                (None, _) => {
+                    // No snapshot — return minimal payload with warning
+                    Ok(C4View {
+                        level,
+                        systems: if level == 1 {
+                            Some(vec!["CodeAtlas Application".to_string()])
+                        } else {
+                            None
+                        },
+                        containers: if level == 2 {
+                            Some(vec!["No snapshot data available".to_string()])
+                        } else {
+                            None
+                        },
+                        warning: Some(
+                            "No snapshot found for this project. Create a snapshot first."
+                                .to_string(),
+                        ),
+                    })
+                }
+            }
+        })
+    }
+}
+
+// ========================================================================
+// H3 Response Types (returned by PR8 commands)
+// ========================================================================
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutiveSummary {
+    pub workspace_id: String,
+    pub total_projects: i64,
+    pub total_files: i64,
+    pub avg_health_score: Option<f64>,
+    pub trend: String, // "up", "down", "stable"
+    pub top_hotspots: Vec<(String, f64)>,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotDiff {
+    pub base_snapshot_id: String,
+    pub target_snapshot_id: String,
+    pub nodes_added: Vec<String>,
+    pub nodes_removed: Vec<String>,
+    pub nodes_modified: Vec<String>,
+    pub edges_added: Vec<String>,
+    pub edges_removed: Vec<String>,
+    pub coupling_delta: f64,
+    pub complexity_delta: f64,
+    pub cycles_delta: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct C4View {
+    pub level: u8,
+    pub systems: Option<Vec<String>>,
+    pub containers: Option<Vec<String>>,
+    pub warning: Option<String>,
+}
+
+// Minimal payload shape for snapshot diff comparison
+#[derive(Debug, Clone, Deserialize)]
+struct SnapshotPayloadRaw {
+    nodes: Vec<NodeRaw>,
+    edges: Vec<String>,
+    avg_coupling: Option<f64>,
+    avg_complexity: Option<f64>,
+    cycle_count: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct NodeRaw {
+    id: String,
+    label: String,
+    path: String,
+    node_type: String,
 }
 
 #[cfg(test)]
@@ -838,5 +1334,266 @@ mod tests {
 
         let snaps = repo.list_snapshots("proj-snap", None).unwrap();
         assert_eq!(snaps.len(), 1);
+    }
+
+    #[test]
+    fn annotation_add_and_list() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        let comment = repo
+            .add_comment("proj1", "node1", "author1", "Test comment", None)
+            .unwrap();
+        assert!(!comment.0.is_empty());
+        assert_eq!(comment.5, "Test comment");
+        assert_eq!(comment.4, "comment");
+
+        let comments = repo.list_comments("proj1", Some("node1")).unwrap();
+        assert_eq!(comments.len(), 1);
+    }
+
+    #[test]
+    fn annotation_list_by_project() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        repo.add_comment("proj1", "node1", "a1", "Comment 1", None)
+            .unwrap();
+        repo.add_comment("proj1", "node2", "a2", "Comment 2", None)
+            .unwrap();
+        repo.add_comment("proj1", "node1", "a3", "Comment 3", None)
+            .unwrap();
+
+        let node1 = repo.list_comments("proj1", Some("node1")).unwrap();
+        assert_eq!(node1.len(), 2);
+
+        let all = repo.list_comments("proj1", None).unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn annotation_delete() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        let c = repo
+            .add_comment("proj1", "node1", "author1", "To delete", None)
+            .unwrap();
+        let deleted = repo.delete_comment(&c.0).unwrap();
+        assert!(deleted);
+
+        let remaining = repo.list_comments("proj1", Some("node1")).unwrap();
+        assert_eq!(remaining.len(), 0);
+
+        let not_found = repo.delete_comment("nonexistent").unwrap();
+        assert!(!not_found);
+    }
+
+    #[test]
+    fn annotation_kind_variants() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        repo.add_comment("proj1", "node1", "a", "A todo", Some("todo"))
+            .unwrap();
+        repo.add_comment("proj1", "node1", "b", "A review", Some("review"))
+            .unwrap();
+        repo.add_comment("proj1", "node1", "c", "An issue", Some("issue"))
+            .unwrap();
+
+        let comments = repo.list_comments("proj1", Some("node1")).unwrap();
+        assert_eq!(comments[0].4, "todo");
+        assert_eq!(comments[1].4, "review");
+        assert_eq!(comments[2].4, "issue");
+    }
+
+    // ====================================================================
+    // PR8 — Executive Summary + Diff + C4 Views
+    // ====================================================================
+
+    #[test]
+    fn executive_summary_empty_workspace() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        let summary = repo.compute_executive_summary("ws-nonexistent").unwrap();
+        assert_eq!(summary.total_projects, 0);
+        assert!(summary.avg_health_score.is_none());
+        assert_eq!(summary.trend, "stable");
+        assert!(summary.top_hotspots.is_empty());
+    }
+
+    #[test]
+    fn executive_summary_trend_up() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        // health_records has FK project_id REFERENCES projects(id)
+        // Create project first so health records can reference it
+        conn.execute(
+            "INSERT OR IGNORE INTO projects (id, name, root_path) VALUES ('proj-up', 'UpProj', '/tmp/up')",
+            [],
+        ).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        repo.create_workspace("ws-up").unwrap();
+        repo.save_health_record("proj-up", Some("ws-up"), 70.0, 30.0, 40.0, 3, 5)
+            .unwrap();
+        repo.save_health_record("proj-up", Some("ws-up"), 90.0, 20.0, 30.0, 1, 2)
+            .unwrap();
+
+        let summary = repo.compute_executive_summary("ws-up").unwrap();
+        assert_eq!(summary.trend, "up"); // 90 > 70
+        let avg = summary.avg_health_score.unwrap();
+        assert!((avg - 80.0).abs() < 0.5, "avg should be ~80, got {}", avg);
+    }
+
+    #[test]
+    fn executive_summary_trend_down() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO projects (id, name, root_path) VALUES ('proj-down', 'DownProj', '/tmp/down')",
+            [],
+        ).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        repo.create_workspace("ws-down").unwrap();
+        repo.save_health_record("proj-down", Some("ws-down"), 90.0, 20.0, 30.0, 1, 2)
+            .unwrap();
+        repo.save_health_record("proj-down", Some("ws-down"), 50.0, 50.0, 60.0, 8, 12)
+            .unwrap();
+
+        let summary = repo.compute_executive_summary("ws-down").unwrap();
+        assert_eq!(summary.trend, "down"); // 50 < 90
+    }
+
+    #[test]
+    fn executive_summary_trend_stable() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO projects (id, name, root_path) VALUES ('proj-stable', 'StableProj', '/tmp/stable')",
+            [],
+        ).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        repo.create_workspace("ws-stable").unwrap();
+        repo.save_health_record("proj-stable", Some("ws-stable"), 72.0, 25.0, 35.0, 3, 4)
+            .unwrap();
+        repo.save_health_record("proj-stable", Some("ws-stable"), 74.0, 24.0, 36.0, 3, 4)
+            .unwrap();
+
+        let summary = repo.compute_executive_summary("ws-stable").unwrap();
+        assert_eq!(summary.trend, "stable"); // 74 vs 72 within 5-point threshold
+    }
+
+    #[test]
+    fn snapshot_diff_same_snapshot_zero_delta() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        let snap = repo.create_snapshot("proj-same", "Baseline", None).unwrap();
+        let diff = repo.compare_snapshots(&snap.0, &snap.0).unwrap();
+
+        assert_eq!(diff.base_snapshot_id, snap.0);
+        assert_eq!(diff.target_snapshot_id, snap.0);
+        assert!(diff.nodes_added.is_empty());
+        assert!(diff.nodes_removed.is_empty());
+        assert_eq!(diff.coupling_delta, 0.0);
+        assert_eq!(diff.complexity_delta, 0.0);
+        assert_eq!(diff.cycles_delta, 0);
+    }
+
+    #[test]
+    fn snapshot_diff_nonexistent_returns_empty_diff() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        let diff = repo
+            .compare_snapshots("nonexistent-base", "nonexistent-target")
+            .unwrap();
+        assert_eq!(diff.coupling_delta, 0.0);
+        assert!(diff.nodes_added.is_empty());
+        assert!(diff.nodes_removed.is_empty());
+    }
+
+    #[test]
+    fn c4_view_invalid_level_returns_error() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        let result = repo.get_c4_view("proj-c4", 99);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn c4_view_level_1_no_data_returns_warning() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        let result = repo.get_c4_view("proj-c4-empty", 1).unwrap();
+        assert_eq!(result.level, 1);
+        assert!(result.systems.is_some());
+        assert!(result.warning.is_some());
+    }
+
+    #[test]
+    fn c4_view_level_2_no_data_returns_warning() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        let repo = ProjectRepository::new(&pool);
+
+        let result = repo.get_c4_view("proj-c4-l2", 2).unwrap();
+        assert_eq!(result.level, 2);
+        assert!(result.containers.is_some());
+        assert!(result.warning.is_some());
     }
 }
