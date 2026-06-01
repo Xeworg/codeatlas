@@ -52,7 +52,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         );
 
         CREATE TABLE IF NOT EXISTS graph_cache (
-            project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+            project_id TEXT PRIMARY KEY,
             graph_json TEXT NOT NULL,
             generated_at TEXT NOT NULL
         );

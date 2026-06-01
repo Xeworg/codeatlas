@@ -179,6 +179,75 @@ impl<'pool> ProjectRepository<'pool> {
             Ok(())
         })
     }
+
+    /// Save a serialized graph for a project.
+    pub fn save_graph_cache(&self, project_id: &str, graph_json: &str) -> SqliteResult<()> {
+        self.pool.with_connection(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO graph_cache (project_id, graph_json, generated_at)
+                 VALUES (?1, ?2, datetime('now'))",
+                params![project_id, graph_json],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Retrieve cached graph JSON for a project.
+    pub fn get_graph_cache(&self, project_id: &str) -> SqliteResult<Option<String>> {
+        self.pool.with_connection(|conn| {
+            conn.query_row(
+                "SELECT graph_json FROM graph_cache WHERE project_id = ?1",
+                params![project_id],
+                |row| row.get(0),
+            )
+            .optional()
+        })
+    }
+
+    /// Search nodes (files) by name substring (case-insensitive).
+    pub fn search_files(&self, project_id: &str, query: &str, limit: usize) -> SqliteResult<Vec<FileInfo>> {
+        self.pool.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, path, name, extension, lines
+                     FROM files
+                     WHERE project_id = ?1 AND (name LIKE ?2 OR path LIKE ?2)
+                     LIMIT ?3",
+            )?;
+            let pattern = format!("%{}%", query);
+            let files = stmt.query_map(params![project_id, pattern, limit as i64], |row| {
+                Ok(FileInfo {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    name: row.get(2)?,
+                    extension: row.get(3)?,
+                    lines: row.get::<_, i64>(4)? as u32,
+                    symbols: vec![],
+                })
+            })?;
+            files.collect()
+        })
+    }
+
+    /// Get file info by ID.
+    pub fn get_file_by_id(&self, file_id: &str) -> SqliteResult<Option<FileInfo>> {
+        self.pool.with_connection(|conn| {
+            conn.query_row(
+                "SELECT id, path, name, extension, lines FROM files WHERE id = ?1",
+                params![file_id],
+                |row| {
+                    Ok(FileInfo {
+                        id: row.get(0)?,
+                        path: row.get(1)?,
+                        name: row.get(2)?,
+                        extension: row.get(3)?,
+                        lines: row.get::<_, i64>(4)? as u32,
+                        symbols: vec![],
+                    })
+                },
+            )
+            .optional()
+        })
+    }
 }
 
 #[cfg(test)]
@@ -238,5 +307,101 @@ mod tests {
 
         let files = repo.get_files("proj-1").unwrap();
         assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn save_and_retrieve_graph_cache() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        repo.save_graph_cache("proj-1", r#"{"nodes":[],"edges":[]}"#).unwrap();
+        let cached = repo.get_graph_cache("proj-1").unwrap();
+        assert!(cached.is_some());
+        assert_eq!(cached.unwrap(), r#"{"nodes":[],"edges":[]}"#);
+    }
+
+    #[test]
+    fn search_files_returns_matches() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        let result = ScanResult {
+            project_id: "proj-2".into(),
+            project_name: "TestProject".into(),
+            root_path: "/tmp/test".into(),
+            files_count: 0,
+            symbols_count: 0,
+            imports_count: 0,
+            files: vec![
+                FileInfo {
+                    id: "f-a".into(),
+                    path: "src/UserService.ts".into(),
+                    name: "UserService.ts".into(),
+                    extension: "ts".into(),
+                    symbols: vec![],
+                    lines: 10,
+                },
+                FileInfo {
+                    id: "f-b".into(),
+                    path: "src/UserController.ts".into(),
+                    name: "UserController.ts".into(),
+                    extension: "ts".into(),
+                    symbols: vec![],
+                    lines: 20,
+                },
+                FileInfo {
+                    id: "f-c".into(),
+                    path: "src/utils.ts".into(),
+                    name: "utils.ts".into(),
+                    extension: "ts".into(),
+                    symbols: vec![],
+                    lines: 5,
+                },
+            ],
+            scan_duration_ms: 0,
+            status: ScanStatus::Ready,
+            error: None,
+        };
+        repo.save_scan_result(&result).unwrap();
+
+        let results = repo.search_files("proj-2", "User", 10).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn get_file_by_id_returns_file() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        let result = ScanResult {
+            project_id: "proj-3".into(),
+            project_name: "Test".into(),
+            root_path: "/tmp/test".into(),
+            files_count: 0,
+            symbols_count: 0,
+            imports_count: 0,
+            files: vec![FileInfo {
+                id: "f-single".into(),
+                path: "src/App.tsx".into(),
+                name: "App.tsx".into(),
+                extension: "tsx".into(),
+                symbols: vec![],
+                lines: 50,
+            }],
+            scan_duration_ms: 0,
+            status: ScanStatus::Ready,
+            error: None,
+        };
+        repo.save_scan_result(&result).unwrap();
+
+        let file = repo.get_file_by_id("f-single").unwrap();
+        assert!(file.is_some());
+        assert_eq!(file.unwrap().name, "App.tsx");
+
+        let not_found = repo.get_file_by_id("nonexistent").unwrap();
+        assert!(not_found.is_none());
     }
 }

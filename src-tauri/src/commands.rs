@@ -132,19 +132,33 @@ pub fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusResponse,
 
 #[tauri::command]
 pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result<GraphData, String> {
-    // Build graph from cached data
     let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
-    let files = repo.get_files(&project_id).map_err(|e| e.to_string())?;
 
-    let all_imports: Vec<engine::models::ImportInfo> = vec![]; // TODO: load from DB
-    let builder = GraphBuilder::new(&state.db.0);
-    builder.build(&files, &all_imports).map_err(|e| e.to_string())
+    // Try to return cached graph first
+    if let Ok(Some(cached)) = repo.get_graph_cache(&project_id) {
+        serde_json::from_str(&cached).map_err(|e| e.to_string())
+    } else {
+        // Build fresh from DB
+        let files = repo.get_files(&project_id).map_err(|e| e.to_string())?;
+        let all_imports: Vec<engine::models::ImportInfo> = vec![]; // TODO: load from DB
+        let builder = GraphBuilder::new(format!("/projects/{}", project_id));
+        let graph = builder.build(&files, &all_imports).map_err(|e| e.to_string())?;
+
+        // Cache it
+        if let Ok(graph_json) = serde_json::to_string(&graph) {
+            let _ = repo.save_graph_cache(&project_id, &graph_json);
+        }
+
+        Ok(graph)
+    }
 }
 
 #[tauri::command]
 pub fn get_node_details(node_id: String, state: State<'_, AppState>) -> Result<FileInfo, String> {
-    // TODO: implement properly
-    Err("Not implemented yet".to_string())
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    repo.get_file_by_id(&node_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("File not found: {}", node_id))
 }
 
 #[tauri::command]
@@ -154,9 +168,26 @@ pub fn search_nodes(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<engine::models::GraphNode>, String> {
-    // TODO: implement properly
+    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
     let limit = limit.unwrap_or(20);
-    Ok(vec![])
+
+    let files = repo
+        .search_files(&project_id, &query, limit)
+        .map_err(|e| e.to_string())?;
+
+    let nodes: Vec<engine::models::GraphNode> = files
+        .into_iter()
+        .map(|f| engine::models::GraphNode {
+            id: f.id,
+            label: f.name,
+            path: f.path,
+            node_type: engine::models::NodeType::Unknown,
+            symbol_count: 0,
+            position: None,
+        })
+        .collect();
+
+    Ok(nodes)
 }
 
 // MARK: AI Commands
