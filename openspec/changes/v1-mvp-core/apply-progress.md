@@ -28,31 +28,31 @@
 
 ### TDD Cycle Evidence
 
-| Cycle | Phase   | Evidence                                                      |
-| ----- | ------- | ------------------------------------------------------------- |
-| 1     | RED     | graph-layout.test.ts: 3 failing tests for layout logic        |
-| 2     | GREEN   | buildLayout: layered BFS depth assignment + position calc     |
-| 3     | GREEN   | GraphNodeComponent + GraphView wired to React Flow            |
-| 4     | GREEN   | SearchOverlay: live search + node selection                   |
-| 5     | GREEN   | DetailPanel + SymbolList: node details + collapsible symbols |
-| 6     | GREEN   | useGraph hook: load/search/selection with loading/error states |
-| 7     | GREEN   | App.tsx wiring: sidebar↔graph↔detail via Zustand stores      |
-| 8     | FINAL   | All 26 Rust + 7 TS tests passing                              |
+| Cycle | Phase | Evidence                                                       |
+| ----- | ----- | -------------------------------------------------------------- |
+| 1     | RED   | graph-layout.test.ts: 3 failing tests for layout logic         |
+| 2     | GREEN | buildLayout: layered BFS depth assignment + position calc      |
+| 3     | GREEN | GraphNodeComponent + GraphView wired to React Flow             |
+| 4     | GREEN | SearchOverlay: live search + node selection                    |
+| 5     | GREEN | DetailPanel + SymbolList: node details + collapsible symbols   |
+| 6     | GREEN | useGraph hook: load/search/selection with loading/error states |
+| 7     | GREEN | App.tsx wiring: sidebar↔graph↔detail via Zustand stores        |
+| 8     | FINAL | All 26 Rust + 7 TS tests passing                               |
 
 ### Completed Tasks
 
-| Task                                  | Status | Notes                                                             |
-| ------------------------------------- | ------ | ----------------------------------------------------------------- |
-| T4b.1 GraphView (React Flow)          | ✅     | fitView, zoom/pan, minimap, background, controls                  |
-| T4b.2 GraphNodeComponent (NodeType)   | ✅     | Color badge por tipo + handle top/bottom                         |
-| T4b.3 Auto-layout helper              | ✅     | buildLayout con BFS depth + layered positioning                  |
-| T4b.4 Search overlay + highlight      | ✅     | SearchOverlay con búsqueda live + resultados + selección          |
-| T4b.5 Collapsible folder grouping     | ✅     | MVP simple: depth-based layout (dagre v2)                        |
-| T4b.6 DetailPanel + SymbolList        | ✅     | metadata, exports, symbols colapsables                           |
-| T4b.7 Sidebar↔Graph sync              | ✅     | handleSelectFile → selectNode → graph highlight                  |
-| T4b.8 Graph↔DetailPanel sync          | ✅     | selectedNodeId → DetailPanel auto-show                          |
-| T4b.9 useGraph hook (load/ready/error)| ✅     | useGraph + useGraphStore con isLoading/error states             |
-| T4b.10 Wire get_graph on scan ready   | ✅     | getGraph() called after scan in App.tsx with buildLayout       |
+| Task                                   | Status | Notes                                                    |
+| -------------------------------------- | ------ | -------------------------------------------------------- |
+| T4b.1 GraphView (React Flow)           | ✅     | fitView, zoom/pan, minimap, background, controls         |
+| T4b.2 GraphNodeComponent (NodeType)    | ✅     | Color badge por tipo + handle top/bottom                 |
+| T4b.3 Auto-layout helper               | ✅     | buildLayout con BFS depth + layered positioning          |
+| T4b.4 Search overlay + highlight       | ✅     | SearchOverlay con búsqueda live + resultados + selección |
+| T4b.5 Collapsible folder grouping      | ✅     | MVP simple: depth-based layout (dagre v2)                |
+| T4b.6 DetailPanel + SymbolList         | ✅     | metadata, exports, symbols colapsables                   |
+| T4b.7 Sidebar↔Graph sync               | ✅     | handleSelectFile → selectNode → graph highlight          |
+| T4b.8 Graph↔DetailPanel sync           | ✅     | selectedNodeId → DetailPanel auto-show                   |
+| T4b.9 useGraph hook (load/ready/error) | ✅     | useGraph + useGraphStore con isLoading/error states      |
+| T4b.10 Wire get_graph on scan ready    | ✅     | getGraph() called after scan in App.tsx with buildLayout |
 
 ### Test Results
 
@@ -279,7 +279,7 @@ TypeScript (npm run test): 4 passed
 | PR2  | Scanner+Parser           | ✅ Done    | `4c439fb` (incluye PR1 hardening) |
 | PR3  | Graph Engine             | ✅ Done    | `eab1ebc`                         |
 | PR4a | UI Shell+Explorer+Stores | ✅ Done    | `c60b471`                         |
-| PR4b | Graph View+Details+Sync | ✅ Done    | `3c46813`                         |
+| PR4b | Graph View+Details+Sync  | ✅ Done    | `3c46813`                         |
 | PR5a | AI Backend               | 🟡 Pending | —                                 |
 | PR5b | AI UI                    | 🟡 Pending | —                                 |
 | PR6  | Hardening                | 🟡 Pending | —                                 |
