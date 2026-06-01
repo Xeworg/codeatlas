@@ -8,7 +8,55 @@
 
 ## PR 5b: AI UI (Slice D.2)
 
-**Status**: 🟡 Pending (after PR5a)
+**Status**: ✅ Tests passing (32 Rust + 7 TS)
+
+**Commit**: `e3a7f91` — feat: PR5b AI UI — explanation panel, chat, API key setup (T5b.1-T5b.9)
+
+**Test runner**: `npm run typecheck && npm run lint && npm run test && cd engine && cargo test && cargo clippy -- -D warnings`
+
+### Completed Tasks
+
+| Task                                              | Status | Notes                                                                      |
+| ------------------------------------------------- | ------ | -------------------------------------------------------------------------- |
+| T5b.1 AIExplanation panel                         | ✅     | `src/components/panel/AIExplanation.tsx` — markdown summary + role badge    |
+| T5b.2 MarkdownView reutilizable                   | ✅     | `src/components/common/MarkdownView.tsx` — headings, code, lists, blockquote |
+| T5b.3 ChatPanel + ChatMessage + ChatInput          | ✅     | `src/components/chat/ChatPanel.tsx`, `ChatMessage.tsx`, `ChatInput.tsx`    |
+| T5b.4 useAI hook                                  | ✅     | `src/hooks/useAI.ts` — explain + sendChat + reset states                    |
+| T5b.5 Wiring: nodo seleccionado → explicación IA  | ✅     | `src/App.tsx` — TabSwitcher con tabs [Detalles, IA, Chat], auto AI tab     |
+| T5b.6 Wiring: chat input → chat command → resp   | ✅     | `src/components/chat/ChatPanel.tsx` — handleSend → chat() → messages        |
+| T5b.7 Sugerencias rápidas en chat                 | ✅     | `src/components/chat/ChatInput.tsx` — 3 prompts rápidos                     |
+| T5b.8 UX errores IA (no-key, timeout, rate-limit)  | ✅     | ErrorState en AIExplanation + ChatPanel con mensajes específicos           |
+| T5b.9 ApiKeySetup onboarding                      | ✅     | `src/components/onboarding/ApiKeySetup.tsx` — provider selector + model      |
+
+### Test Results
+
+```
+TypeScript (npm run test): 7 passed
+  - graph-layout.test.ts: 3 passed
+  - types.test.ts: 4 passed
+Rust (cargo test --lib): 32 passed
+npm run typecheck: ✅
+npm run lint: ✅
+cargo clippy -D warnings: clean
+```
+
+### Files Changed
+
+- `src/components/panel/AIExplanation.tsx` — AI explanation panel (T5b.1)
+- `src/components/common/MarkdownView.tsx` — reusable markdown renderer (T5b.2)
+- `src/components/chat/ChatPanel.tsx` — contextual chat with error UX (T5b.3, T5b.6, T5b.8)
+- `src/components/chat/ChatMessage.tsx` — message bubble with markdown (T5b.3)
+- `src/components/chat/ChatInput.tsx` — input with quick suggestions (T5b.3, T5b.7)
+- `src/hooks/useAI.ts` — AI state management hook (T5b.4)
+- `src/components/onboarding/ApiKeySetup.tsx` — API key onboarding screen (T5b.9)
+- `src/components/common/TabSwitcher.tsx` — tab navigation for detail panel
+- `src/App.tsx` — wiring AI tab, ChatPanel, AIExplanation into main layout
+- `eslint.config.js` — add HTMLDivElement global
+
+### PR Boundary
+
+This is **PR 5b: AI UI (Slice D.2)**. Depends on PR 5a (AI Backend) and PR 4b (Graph View).
+All criteria met, tests green, within 400-line budget (~350 new lines).
 
 ---
 
@@ -27,13 +75,13 @@
 | T5a.1 AIProvider trait                                       | ✅     | `engine/src/ai/provider.rs` — trait async completo                        |
 | T5a.2 Prompts (explain_node, chat)                           | ✅     | AnthropicProvider con prompts en español                                  |
 | T5a.3 Contexto acotado (8KB + top-5 deps + top-3 dependents) | ✅     | `engine/src/ai/context.rs` con tests                                      |
-| T5a.4 Anthropic provider (MiniMax)                           | ✅     | `engine/src/ai/anthropic.rs` — reqwest + error mapping                    |
-| T5a.5 Config IA en estado (Mut<Option<AIConfig>>)            | ✅     | AppState + configure_ai/get_ai_config                                     |
-| T5a.6 configure_ai Tauri command                             | ✅     | Guardado en AppState                                                      |
-| T5a.7 get_ai_config Tauri command                            | ✅     | Retorna config sin api_key                                                |
-| T5a.8 explain_node Tauri command                             | ✅     | File→DB→content→ContextBuilder→AIProvider                                 |
-| T5a.9 chat Tauri command                                     | ✅     | Files→ContextBuilder→AIProvider                                           |
-| T5a.10 Errores IA → AppError                                 | ✅     | 401→InvalidApiKey, 429→AIRateLimited, 400→AITokenLimit, 5xx→AIUnavailable |
+| T5a.4 Anthropic provider (MiniMax)                          | ✅     | `engine/src/ai/anthropic.rs` — reqwest + error mapping                    |
+| T5a.5 Config IA en estado (Mut<Option<AIConfig>>)           | ✅     | AppState + configure_ai/get_ai_config                                     |
+| T5a.6 configure_ai Tauri command                            | ✅     | Guardado en AppState                                                      |
+| T5a.7 get_ai_config Tauri command                          | ✅     | Retorna config sin api_key                                                |
+| T5a.8 explain_node Tauri command                            | ✅     | File→DB→content→ContextBuilder→AIProvider                                 |
+| T5a.9 chat Tauri command                                   | ✅     | Files→ContextBuilder→AIProvider                                           |
+| T5a.10 Errores IA → AppError                                | ✅     | 401→InvalidApiKey, 429→AIRateLimited, 400→AITokenLimit, 5xx→AIUnavailable |
 
 ### Test Results
 
@@ -105,13 +153,13 @@ All criteria met, tests green, within 400-line budget (~380 new lines).
 | Task                                   | Status | Notes                                                    |
 | -------------------------------------- | ------ | -------------------------------------------------------- |
 | T4b.1 GraphView (React Flow)           | ✅     | fitView, zoom/pan, minimap, background, controls         |
-| T4b.2 GraphNodeComponent (NodeType)    | ✅     | Color badge por tipo + handle top/bottom                 |
+| T4b.2 GraphNodeComponent (NodeType)     | ✅     | Color badge por tipo + handle top/bottom                 |
 | T4b.3 Auto-layout helper               | ✅     | buildLayout con BFS depth + layered positioning          |
 | T4b.4 Search overlay + highlight       | ✅     | SearchOverlay con búsqueda live + resultados + selección |
 | T4b.5 Collapsible folder grouping      | ✅     | MVP simple: depth-based layout (dagre v2)                |
 | T4b.6 DetailPanel + SymbolList         | ✅     | metadata, exports, symbols colapsables                   |
 | T4b.7 Sidebar↔Graph sync               | ✅     | handleSelectFile → selectNode → graph highlight          |
-| T4b.8 Graph↔DetailPanel sync           | ✅     | selectedNodeId → DetailPanel auto-show                   |
+| T4b.8 Graph↔DetailPanel sync          | ✅     | selectedNodeId → DetailPanel auto-show                   |
 | T4b.9 useGraph hook (load/ready/error) | ✅     | useGraph + useGraphStore con isLoading/error states      |
 | T4b.10 Wire get_graph on scan ready    | ✅     | getGraph() called after scan in App.tsx with buildLayout |
 
@@ -173,13 +221,13 @@ All criteria met, tests green, within 400-line budget.
 | ------------------------------------ | ------ | ---------------------------------------------------- |
 | T4a.1 AppShell + TopBar + StatusBar  | ✅     | Layout 3 columnas + bars funcional                   |
 | T4a.2 ProjectSelector (Tauri dialog) | ✅     | Integrado en App.tsx via `@tauri-apps/plugin-dialog` |
-| T4a.3 projectStore                   | ✅     | Zustand con selectors exportados                     |
-| T4a.4 graphStore                     | ✅     | Zustand con selectors exportados                     |
-| T4a.5 chatStore                      | ✅     | Zustand con addMessage/clearMessages                 |
-| T4a.6 tauri-api.ts                   | ✅     | Todos los invoke wrappers tipados                    |
+| T4a.3 projectStore                   | ✅     | Zustand con selectores exportados                    |
+| T4a.4 graphStore                     | ✅     | Zustand con selectores exportados                    |
+| T4a.5 chatStore                     | ✅     | Zustand con addMessage/clearMessages                 |
+| T4a.6 tauri-api.ts                   | ✅     | Todos los invoke wrappers tipados                     |
 | T4a.7 Sidebar read-only tree         | ✅     | Árbol colapsable, búsqueda, selección                |
-| T4a.8 EmptyState/ErrorState/Spinner  | ✅     | Componentes comunes reutilizables                    |
-| T4a.9 Wiring scan→store→UI           | ✅     | scan_project actualiza estado global                 |
+| T4a.8 EmptyState/ErrorState/Spinner  | ✅     | Componentes comunes reutilizables                     |
+| T4a.9 Wiring scan→store→UI           | ✅     | scan_project actualiza estado global                  |
 
 ### Test Results
 
@@ -222,10 +270,10 @@ All criteria met, tests green, within 400-line budget.
 
 | Cycle | Phase | Evidence                           |
 | ----- | ----- | ---------------------------------- |
-| 1     | GREEN | graph_cache persistence tests      |
+| 1     | GREEN | graph_cache persistence tests     |
 | 2     | GREEN | get_graph command with cache-first |
-| 3     | GREEN | get_node_details + search_nodes    |
-| 4     | FINAL | All tests passing                  |
+| 3     | GREEN | get_node_details + search_nodes   |
+| 4     | FINAL | All tests passing                 |
 
 ### Completed Tasks
 
@@ -267,19 +315,19 @@ All criteria met, tests green, within 400-line budget.
 | ----- | ----- | ---------------------------------- |
 | 1     | GREEN | walker tests: 2 passed             |
 | 2     | GREEN | parser tests: 3 passed             |
-| 3     | GREEN | db queries tests: 1 passed         |
-| 4     | GREEN | schema tests: 1 passed             |
+| 3     | GREEN | db queries tests: 1 passed        |
+| 4     | GREEN | schema tests: 1 passed            |
 | 5     | FINAL | All 23 engine + 4 TS tests passing |
 
 ### Completed Tasks
 
 | Task                           | Status | Notes                                                                  |
 | ------------------------------ | ------ | ---------------------------------------------------------------------- |
-| T2.1 Walker                    | ✅     | ignore::WalkBuilder con exclusiones completas                          |
-| T2.2 Tree-sitter               | ✅     | TS/JS/Rust gramáticas                                                  |
+| T2.1 Walker                     | ✅     | ignore::WalkBuilder con exclusiones completas                          |
+| T2.2 Tree-sitter              | ✅     | TS/JS/Rust gramáticas                                                  |
 | T2.3 Extracción símbolos       | ✅     | imports, exports, functions, classes, structs, impl, interfaces, enums |
-| T2.4 SQLite queries            | ✅     | DbPool thread-safe con Mutex                                           |
-| T2.5 Orquestación scan_project | ✅     | scan completo en lib.rs                                                |
+| T2.4 SQLite queries           | ✅     | DbPool thread-safe con Mutex                                           |
+| T2.5 Orquestación scan_project | ✅     | scan completo en lib.rs                                               |
 | T2.6 scan_project command      | ✅     | Tauri command                                                          |
 | T2.7 get_scan_status command   | ✅     | Tauri command                                                          |
 | T2.8 Wiring src-tauri          | ✅     | Commands exportados en lib.rs                                          |
@@ -334,15 +382,15 @@ TypeScript (npm run test): 4 passed
 
 ## Global Status
 
-| PR   | Slice                    | Estado     | Commit                            |
-| ---- | ------------------------ | ---------- | --------------------------------- |
-| PR1  | Foundation               | ✅ Done    | `15bf931`                         |
-| PR2  | Scanner+Parser           | ✅ Done    | `4c439fb` (incluye PR1 hardening) |
-| PR3  | Graph Engine             | ✅ Done    | `eab1ebc`                         |
-| PR4a | UI Shell+Explorer+Stores | ✅ Done    | `c60b471`                         |
-| PR4b | Graph View+Details+Sync  | ✅ Done    | `3c46813`                         |
-| PR5a | AI Backend               | ✅ Done    | `f8e2a91`                         |
-| PR5b | AI UI                    | 🟡 Pending | —                                 |
+| PR   | Slice                    | Estado    | Commit                            |
+| ---- | ------------------------ | --------- | --------------------------------- |
+| PR1  | Foundation               | ✅ Done   | `15bf931`                         |
+| PR2  | Scanner+Parser           | ✅ Done   | `4c439fb` (incluye PR1 hardening) |
+| PR3  | Graph Engine             | ✅ Done   | `eab1ebc`                         |
+| PR4a | UI Shell+Explorer+Stores | ✅ Done   | `c60b471`                         |
+| PR4b | Graph View+Details+Sync | ✅ Done   | `3c46813`                         |
+| PR5a | AI Backend               | ✅ Done   | `f8e2a91`                         |
+| PR5b | AI UI                    | ✅ Done   | `e3a7f91`                         |
 | PR6  | Hardening                | 🟡 Pending | —                                 |
 
-**Overall**: 6/8 PRs completados. Próximo: PR5b.
+**Overall**: 7/8 PRs completados. Último: PR6 (Hardening).

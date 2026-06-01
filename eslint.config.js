@@ -34,6 +34,7 @@ export default [
         React: 'readonly',
         JSX: 'readonly',
         HTMLInputElement: 'readonly',
+        HTMLDivElement: 'readonly',
         ChangeEvent: 'readonly',
       },
     },
