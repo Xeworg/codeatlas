@@ -51,7 +51,7 @@ export function GraphNodeComponent({ data, selected }: NodeProps) {
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && selectNode(node.id)}
     >
-      <Handle type="target" position={Position.Top} className="!bg-slate-500" />
+      <Handle type="target" position={Position.Left} className="!bg-slate-500" />
 
       {/* Header: type badge */}
       <div
@@ -72,7 +72,7 @@ export function GraphNodeComponent({ data, selected }: NodeProps) {
         <div className="text-xs text-slate-500 mt-1">{node.symbolCount} symbols</div>
       </div>
 
-      <Handle type="source" position={Position.Bottom} className="!bg-slate-500" />
+      <Handle type="source" position={Position.Right} className="!bg-slate-500" />
     </div>
   )
 }

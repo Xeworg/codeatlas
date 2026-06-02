@@ -58,7 +58,7 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         let file_info = FileInfo {
             id: uuid::Uuid::new_v4().to_string(),
             path: file.relative_path.clone(),
-            name: file.path.split('/').last().unwrap_or("").to_string(),
+            name: file.path.split('/').next_back().unwrap_or("").to_string(),
             extension: file.extension.clone(),
             symbols,
             lines: content.lines().count() as u32,
@@ -115,53 +115,97 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
     let parse_ms = parse_start.elapsed().as_millis() as u64;
     let total_ms = discover_ms + parse_ms;
     let symbols_count: usize = file_infos.iter().map(|f| f.symbols.len()).sum();
-    let imports_count = all_imports.len();
 
-    let result = ScanResult {
+    let repo = ProjectRepository::new(&state.db);
+
+    // Save project and files before imports. Imports reference files(id), so
+    // persisting them first can create orphan rows or fail once FK enforcement is on.
+    let mut result = ScanResult {
         project_id: uuid::Uuid::new_v4().to_string(),
-        project_name: path.split('/').last().unwrap_or("Project").to_string(),
+        project_name: path.split('/').next_back().unwrap_or("Project").to_string(),
         root_path: path.clone(),
         files_count: file_infos.len(),
         symbols_count,
-        imports_count,
+        imports_count: 0,
         files: file_infos,
         scan_duration_ms: total_ms,
         status: engine::models::ScanStatus::Ready,
         error: None,
     };
 
-    // Persist project and files first (may fail)
-    let repo = ProjectRepository::new(&state.db);
-
-    // Save project and files
     if let Err(e) = repo.save_scan_result(&result) {
         let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
         *status = ScanStatus::Error;
         return Err(format!("Failed to save scan result: {}", e));
     }
 
-    // Transition to graph-building state
+    // Transition to graph-building state while import edges are persisted.
     {
         let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
         *status = ScanStatus::BuildingGraph;
     }
 
-    // Persist all imports
-    let mut import_errors = 0usize;
+    let parsed_count = all_imports.len();
+    let mut skipped_empty = 0usize;
+    let mut persist_errors = 0usize;
+    let mut persisted_count = 0usize;
+
     for imp in &all_imports {
-        if let Err(e) = repo.save_import(imp) {
-            tracing::warn!("Failed to persist import {:?}: {}", imp, e);
-            import_errors += 1;
+        // Guard: skip imports with no source file ID — these produce orphan edges
+        // that would be filtered out downstream and mask the real resolver failure.
+        if imp.source_file_id.is_empty() {
+            skipped_empty += 1;
+            tracing::debug!("Skipping import with empty source_file_id: {:?}", imp);
+            continue;
+        }
+
+        match repo.save_import(imp) {
+            Ok(()) => {
+                persisted_count += 1;
+            }
+            Err(e) => {
+                persist_errors += 1;
+                tracing::debug!("Failed to persist import {:?}: {}", imp, e);
+            }
         }
     }
-    if import_errors > 0 {
-        tracing::warn!("{} imports failed to persist out of {}", import_errors, all_imports.len());
+
+    // Use persisted count as the authoritative number — what actually lands in the DB.
+    // If >50% of non-empty imports fail to persist, surface it in the result so the
+    // frontend can reflect a degraded scan rather than silently returning Ready.
+    let non_empty_total = parsed_count.saturating_sub(skipped_empty);
+    let failure_count = skipped_empty + persist_errors;
+    let degraded = non_empty_total > 0 && failure_count > non_empty_total / 2;
+
+    result.imports_count = persisted_count;
+    if degraded {
+        result.status = engine::models::ScanStatus::Error;
+        result.error = Some(format!(
+            "Import persistence degraded: {} parsed, {} skipped (empty source), {} DB errors, {} persisted",
+            parsed_count, skipped_empty, persist_errors, persisted_count
+        ));
     }
 
-    // Final state: ready (even if some imports failed — graph is still buildable)
+    tracing::info!(
+        "Import persistence: {} parsed, {} skipped, {} errors, {} persisted{}{}",
+        parsed_count,
+        skipped_empty,
+        persist_errors,
+        persisted_count,
+        if failure_count > 0 { " [DEGRADED]" } else { "" },
+        if degraded { " [SURFACED AS ERROR]" } else { "" },
+    );
+
+    // Persist final authoritative import count/status after import persistence.
+    if let Err(e) = repo.save_scan_result(&result) {
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::Error;
+        return Err(format!("Failed to update scan result: {}", e));
+    }
+
     {
         let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
-        *status = ScanStatus::Ready;
+        *status = if degraded { ScanStatus::Error } else { ScanStatus::Ready };
     }
 
     // Track project root so AI commands can read files from disk
@@ -805,7 +849,9 @@ mod export_view_tests {
 
 // State helpers
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum ScanStatus {
+    #[default]
     Idle,
     Scanning,
     BuildingGraph,
@@ -813,11 +859,6 @@ pub enum ScanStatus {
     Error,
 }
 
-impl Default for ScanStatus {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
 
 // MARK: v3 Workspace Commands
 
