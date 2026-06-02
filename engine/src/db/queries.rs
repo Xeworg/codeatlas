@@ -159,6 +159,31 @@ impl<'pool> ProjectRepository<'pool> {
         })
     }
 
+    pub fn get_imports(&self, project_id: &str) -> SqliteResult<Vec<ImportInfo>> {
+        self.pool.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, source_file_id, target_file_id, target_module, import_names,
+                      is_default, is_type_import
+                 FROM imports WHERE source_file_id IN
+                       (SELECT id FROM files WHERE project_id = ?1)",
+            )?;
+            let rows = stmt.query_map(params![project_id], |row| {
+                let names_json: String = row.get(4)?;
+                let imports: Vec<String> = serde_json::from_str(&names_json).unwrap_or_default();
+                Ok(ImportInfo {
+                    id: row.get(0)?,
+                    source_file_id: row.get(1)?,
+                    target_file_id: row.get(2)?,
+                    target_module: row.get(3)?,
+                    imports,
+                    is_default: row.get::<_, Option<bool>>(5)?.unwrap_or(false),
+                    is_type: row.get::<_, Option<bool>>(6)?.unwrap_or(false),
+                })
+            })?;
+            rows.collect()
+        })
+    }
+
     pub fn save_import(&self, import: &ImportInfo) -> SqliteResult<()> {
         self.pool.with_connection(|conn| {
             conn.execute(

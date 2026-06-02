@@ -27,16 +27,6 @@ pub struct ScanStatusResponse {
     pub progress: f32,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ScanTiming {
-    pub discover_ms: u64,
-    pub parse_ms: u64,
-    pub total_ms: u64,
-    pub files_count: usize,
-    pub symbols_count: usize,
-    pub imports_count: usize,
-}
-
 // MARK: Project & Scanning Commands
 
 #[tauri::command]
@@ -54,17 +44,16 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
     let discover_ms = discover_start.elapsed().as_millis() as u64;
 
     let parse_start = Instant::now();
-    let mut files: Vec<FileInfo> = Vec::new();
-    let mut all_imports: Vec<engine::models::ImportInfo> = Vec::new();
 
+    // Phase 1: collect files with stable UUIDs
+    let mut file_infos: Vec<FileInfo> = Vec::new();
     for file in &discovered {
         let content = match std::fs::read_to_string(&file.path) {
             Ok(c) => c,
             Err(_) => continue,
         };
 
-        let (symbols, imports) =
-            CodeParser::parse_file(&file.path, &content, &file.extension);
+        let (symbols, _) = CodeParser::parse_file(&file.path, &content, &file.extension);
 
         let file_info = FileInfo {
             id: uuid::Uuid::new_v4().to_string(),
@@ -75,16 +64,42 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
             lines: content.lines().count() as u32,
         };
 
-        // Update imports with resolved targets
-        let resolver = PathResolver::new(&path);
+        file_infos.push(file_info);
+    }
+
+    // Build path → UUID lookup for resolving imports
+    let path_to_id: std::collections::HashMap<String, String> = file_infos
+        .iter()
+        .map(|f| (f.path.clone(), f.id.clone()))
+        .collect();
+
+    // Phase 2: resolve all imports with correct source/target file IDs
+    let resolver = PathResolver::new(&path);
+    let mut all_imports: Vec<engine::models::ImportInfo> = Vec::new();
+
+    for file in &discovered {
+        let content = match std::fs::read_to_string(&file.path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let (_, imports) = CodeParser::parse_file(&file.path, &content, &file.extension);
+
+        // Get source file UUID (must exist in path_to_id — files are already collected)
+        let source_id = path_to_id.get(&file.relative_path).cloned().unwrap_or_default();
+
         let resolved_imports: Vec<engine::models::ImportInfo> = imports
             .into_iter()
             .map(|mut imp| {
+                // Fix source_file_id: set to the file's UUID, not the path string
+                imp.source_file_id = source_id.clone();
+
+                // Resolve target
                 if let Some(ref module) = imp.target_module {
                     let res = resolver.resolve(module, &file.relative_path);
                     match res {
                         engine::graph::resolver::Resolution::Internal(p) => {
-                            imp.target_file_id = files.iter().find(|f| f.path == p).map(|f| f.id.clone());
+                            imp.target_file_id = path_to_id.get(&p).cloned();
                         }
                         engine::graph::resolver::Resolution::External(_) => {}
                         engine::graph::resolver::Resolution::Unresolved(_) => {}
@@ -95,33 +110,55 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
             .collect();
 
         all_imports.extend(resolved_imports);
-        files.push(file_info);
     }
 
     let parse_ms = parse_start.elapsed().as_millis() as u64;
     let total_ms = discover_ms + parse_ms;
-    let symbols_count: usize = files.iter().map(|f| f.symbols.len()).sum();
+    let symbols_count: usize = file_infos.iter().map(|f| f.symbols.len()).sum();
     let imports_count = all_imports.len();
 
     let result = ScanResult {
         project_id: uuid::Uuid::new_v4().to_string(),
         project_name: path.split('/').last().unwrap_or("Project").to_string(),
         root_path: path.clone(),
-        files_count: files.len(),
+        files_count: file_infos.len(),
         symbols_count,
         imports_count,
-        files,
+        files: file_infos,
         scan_duration_ms: total_ms,
         status: engine::models::ScanStatus::Ready,
         error: None,
     };
 
-    // Persist
+    // Persist project and files first (may fail)
     let repo = ProjectRepository::new(&state.db);
+
+    // Save project and files
     if let Err(e) = repo.save_scan_result(&result) {
-        tracing::warn!("Failed to save scan result: {}", e);
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::Error;
+        return Err(format!("Failed to save scan result: {}", e));
     }
 
+    // Transition to graph-building state
+    {
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::BuildingGraph;
+    }
+
+    // Persist all imports
+    let mut import_errors = 0usize;
+    for imp in &all_imports {
+        if let Err(e) = repo.save_import(imp) {
+            tracing::warn!("Failed to persist import {:?}: {}", imp, e);
+            import_errors += 1;
+        }
+    }
+    if import_errors > 0 {
+        tracing::warn!("{} imports failed to persist out of {}", import_errors, all_imports.len());
+    }
+
+    // Final state: ready (even if some imports failed — graph is still buildable)
     {
         let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
         *status = ScanStatus::Ready;
@@ -160,23 +197,58 @@ pub fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusResponse,
 
 #[tauri::command]
 pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result<GraphData, String> {
+    // Set building-graph state so UI can reflect progress
+    {
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::BuildingGraph;
+    }
+
     let repo = ProjectRepository::new(&state.db);
     let build_start = Instant::now();
 
     // Try to return cached graph first
     if let Ok(Some(cached)) = repo.get_graph_cache(&project_id) {
-        let elapsed = build_start.elapsed().as_millis();
-        if elapsed > 0 {
-            tracing::info!("Graph cache hit for {} ({}ms)", project_id, elapsed);
+        tracing::info!("Graph cache hit for {} ({}ms)", project_id, build_start.elapsed().as_millis());
+        {
+            let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+            *status = ScanStatus::Ready;
         }
         return serde_json::from_str(&cached).map_err(|e| e.to_string());
     }
 
-    // Build fresh from DB
+    // Build fresh from DB using REAL imports
     let files = repo.get_files(&project_id).map_err(|e| e.to_string())?;
-    let all_imports: Vec<engine::models::ImportInfo> = vec![];
-    let builder = GraphBuilder::new(format!("/projects/{}", project_id));
-    let graph = builder.build(&files, &all_imports).map_err(|e| e.to_string())?;
+
+    if files.is_empty() {
+        tracing::warn!("No files found for project {} — returning empty graph", project_id);
+        {
+            let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+            *status = ScanStatus::Error;
+        }
+        return Err(format!("Project {} has no files in database", project_id));
+    }
+
+    // Load real imports from DB
+    let all_imports = repo.get_imports(&project_id).map_err(|e| e.to_string())?;
+
+    // Use real project root path from DB for stable graph path semantics.
+    let root_path = repo
+        .get_project(&project_id)
+        .ok()
+        .flatten()
+        .map(|(_, root, _)| root)
+        .unwrap_or_else(|| format!("/projects/{}", project_id));
+
+    let builder = GraphBuilder::new(root_path);
+    let mut graph = builder.build(&files, &all_imports).map_err(|e| e.to_string())?;
+
+    // ReactFlow expects edges to reference existing node ids.
+    // Keep only internal edges that have both endpoints present in current node set.
+    let node_ids: std::collections::HashSet<String> =
+        graph.nodes.iter().map(|n| n.id.clone()).collect();
+    graph
+        .edges
+        .retain(|e| node_ids.contains(&e.source) && node_ids.contains(&e.target));
 
     // Cache it
     if let Ok(graph_json) = serde_json::to_string(&graph) {
@@ -185,12 +257,18 @@ pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result
 
     let elapsed = build_start.elapsed().as_millis();
     tracing::info!(
-        "Graph built for {}: {} nodes, {} edges ({}ms)",
+        "Graph built for {}: {} nodes, {} edges ({}ms), {} imports used",
         project_id,
         graph.nodes.len(),
         graph.edges.len(),
-        elapsed
+        elapsed,
+        all_imports.len()
     );
+
+    {
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::Ready;
+    }
 
     Ok(graph)
 }

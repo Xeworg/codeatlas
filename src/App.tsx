@@ -121,7 +121,6 @@ function App() {
 
       const path = selected as string
       const name = path.split('/').pop() ?? 'Project'
-      const newProjectId = `proj-${Date.now()}`
 
       // Reset analytics state for new project
       setArchitectureDetection(null)
@@ -129,7 +128,8 @@ function App() {
       setGraphInsights(null)
       prevProjectId.current = null
 
-      setProject(newProjectId, name, path)
+      // Temporary project marker while scan runs
+      setProject(`proj-${Date.now()}`, name, path)
       setStatus('scanning')
       setScanStartTime(Date.now())
       setLoading(true)
@@ -138,25 +138,29 @@ function App() {
       setScanResult(result)
       setStatus(result.status)
 
-      if (result.status === 'ready' && result.project_id) {
+      // Promote canonical backend project id for all subsequent hooks/commands
+      if (result.projectId) {
+        setProject(result.projectId, result.projectName || name, result.rootPath || path)
+      }
+
+      if (result.status === 'ready' && result.projectId) {
         setLoading(true)
         try {
-          const graph = await getGraph(result.project_id)
+          const graph = await getGraph(result.projectId)
           const laid = buildLayout(graph)
           setGraphData(laid)
-        } catch {
-          setGraphData({
-            nodes: [],
-            edges: [],
-            project_id: result.project_id,
-            generated_at: new Date().toISOString(),
-          })
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          setError(`Graph load failed: ${msg}`)
         } finally {
           setLoading(false)
         }
+      } else {
+        setLoading(false)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+      setLoading(false)
     }
   }, [setProject, setStatus, setScanResult, setError, setGraphData, setLoading])
 

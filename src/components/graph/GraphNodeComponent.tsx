@@ -69,7 +69,7 @@ export function GraphNodeComponent({ data, selected }: NodeProps) {
         <div className="text-xs text-slate-400 truncate max-w-[160px]" title={node.path}>
           {node.path}
         </div>
-        <div className="text-xs text-slate-500 mt-1">{node.symbol_count} symbols</div>
+        <div className="text-xs text-slate-500 mt-1">{node.symbolCount} symbols</div>
       </div>
 
       <Handle type="source" position={Position.Bottom} className="!bg-slate-500" />
