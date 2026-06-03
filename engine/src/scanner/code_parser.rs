@@ -2,7 +2,9 @@
 
 use tree_sitter::{Language, Parser, Tree};
 
-use crate::models::{ImportInfo, SymbolInfo, SymbolKind};
+use crate::models::{ImportInfo, ParseResult, SymbolInfo, SymbolKind};
+
+use super::parser::ParserRegistry;
 
 pub struct CodeParser;
 
@@ -42,6 +44,15 @@ impl CodeParser {
         }
 
         (symbols, imports)
+    }
+
+    pub fn parse_file_all(
+        path: &str,
+        content: &str,
+        extension: &str,
+        file_id: &str,
+    ) -> ParseResult {
+        ParserRegistry::default().parse_file(path, content, extension, file_id)
     }
 
     fn extract_ts_symbols(
@@ -243,5 +254,23 @@ export default App;"#;
             .iter()
             .any(|i| i.target_module.as_deref() == Some("react")));
         assert!(imports.iter().any(|i| i.is_type));
+    }
+
+    #[test]
+    fn parse_file_all_returns_outline_via_registry() {
+        let code = r#"
+class UserService {
+    getUser() { return null; }
+}
+"#;
+        let result = CodeParser::parse_file_all("UserService.ts", code, "ts", "file-1");
+
+        assert!(result.symbols.iter().any(|s| s.name == "UserService"));
+        assert!(result.outline.iter().any(|o| o.name == "UserService"));
+        assert!(result
+            .outline
+            .iter()
+            .flat_map(|o| o.children.iter())
+            .any(|o| o.name == "getUser"));
     }
 }

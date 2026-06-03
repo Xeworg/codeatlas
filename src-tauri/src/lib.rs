@@ -55,6 +55,7 @@ pub fn run() {
             commands::get_scan_status,
             commands::get_graph,
             commands::get_node_details,
+            commands::get_node_outline,
             commands::search_nodes,
             commands::configure_ai,
             commands::get_ai_config,

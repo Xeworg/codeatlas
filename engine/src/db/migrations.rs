@@ -12,7 +12,7 @@
 use rusqlite::{Connection, Result as SqliteResult};
 
 /// Current schema version after all migrations are applied.
-pub const CURRENT_SCHEMA_VERSION: u32 = 6;
+pub const CURRENT_SCHEMA_VERSION: u32 = 7;
 
 /// Run all pending migrations on the given connection.
 /// Safe to call on every startup -- already-applied migrations are skipped.
@@ -73,6 +73,7 @@ fn load_migration_script(version: u32) -> Option<String> {
         4 => Some(INCLUDE_004.to_string()),
         5 => Some(INCLUDE_005.to_string()),
         6 => Some(INCLUDE_006.to_string()),
+        7 => Some(INCLUDE_007.to_string()),
         _ => None,
     }
 }
@@ -119,6 +120,7 @@ const INCLUDE_003: &str = include_str!("../../migrations/003_architecture_and_in
 const INCLUDE_004: &str = include_str!("../../migrations/004_workspace_and_snapshots.sql");
 const INCLUDE_005: &str = include_str!("../../migrations/005_collaboration_annotations.sql");
 const INCLUDE_006: &str = include_str!("../../migrations/006_health_timeline.sql");
+const INCLUDE_007: &str = include_str!("../../migrations/007_outline_items.sql");
 
 #[cfg(test)]
 mod tests {
@@ -180,8 +182,8 @@ mod tests {
         // Verify user_version is 6 (after migration 003+004+005+006)
         assert_eq!(
             get_schema_version(&conn),
-            6,
-            "schema version must be 6 after migration"
+            7,
+            "schema version must be 7 after migration"
         );
     }
 
@@ -289,8 +291,8 @@ mod tests {
         run_pending_migrations(&conn).unwrap();
         assert_eq!(
             get_schema_version(&conn),
-            6,
-            "schema version must be 6 after migration"
+            7,
+            "schema version must be 7 after migration"
         );
 
         // workspaces table must exist
@@ -344,7 +346,7 @@ mod tests {
         assert_eq!(get_schema_version(&conn), 1);
 
         run_pending_migrations(&conn).unwrap();
-        assert_eq!(get_schema_version(&conn), 6);
+        assert_eq!(get_schema_version(&conn), 7);
 
         // health_records table must exist
         let count: i64 = conn
@@ -405,7 +407,7 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute("PRAGMA user_version = 6", []).unwrap();
         run_pending_migrations(&conn).unwrap();
-        assert_eq!(get_schema_version(&conn), 6);
+        assert_eq!(get_schema_version(&conn), 7);
     }
 
     #[test]
@@ -414,7 +416,7 @@ mod tests {
         assert_eq!(get_schema_version(&conn), 1);
 
         run_pending_migrations(&conn).unwrap();
-        assert_eq!(get_schema_version(&conn), 6);
+        assert_eq!(get_schema_version(&conn), 7);
 
         // annotations table must exist
         let count: i64 = conn

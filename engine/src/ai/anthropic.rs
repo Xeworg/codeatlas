@@ -1,9 +1,7 @@
 //! Anthropic AI provider implementation.
 
 use crate::ai::AIProvider;
-use crate::models::{
-    ChatMessage, ChatResponse, ChatRole, NodeExplanation,
-};
+use crate::models::{ChatMessage, ChatResponse, ChatRole, NodeExplanation};
 use crate::{AppError, Result};
 
 pub struct AnthropicProvider {
@@ -104,11 +102,7 @@ impl AIProvider for AnthropicProvider {
         })
     }
 
-    async fn chat(
-        &self,
-        messages: &[ChatMessage],
-        context: &str,
-    ) -> Result<ChatResponse> {
+    async fn chat(&self, messages: &[ChatMessage], context: &str) -> Result<ChatResponse> {
         let history = messages
             .iter()
             .map(|m| format!("{}: {}", m.role, m.content))

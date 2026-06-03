@@ -11,6 +11,7 @@ import type {
   ChatResponse,
   AIConfig,
   ScanStatus,
+  OutlineItem,
 } from './types'
 import type { ApiError, ErrorCode } from './types'
 
@@ -88,6 +89,14 @@ export async function getGraph(projectId: string): Promise<GraphData> {
 export async function getNodeDetails(nodeId: string): Promise<FileInfo> {
   try {
     return await invoke<FileInfo>('get_node_details', { nodeId })
+  } catch (e) {
+    throw toApiError(e)
+  }
+}
+
+export async function getNodeOutline(nodeId: string): Promise<OutlineItem[]> {
+  try {
+    return await invoke<OutlineItem[]>('get_node_outline', { nodeId })
   } catch (e) {
     throw toApiError(e)
   }

@@ -3,10 +3,10 @@
 //! All commands return timing metadata where applicable.
 
 use engine::{
-    ai::{AnthropicProvider, ContextBuilder, AIProvider},
+    ai::{AIProvider, AnthropicProvider, ContextBuilder},
     db::{DbPool, ProjectRepository},
     graph::{GraphBuilder, PathResolver},
-    models::{ChatMessage, FileInfo, GraphData, NodeExplanation, ScanResult},
+    models::{ChatMessage, FileInfo, GraphData, NodeExplanation, OutlineItem, ScanResult},
     scanner::{CodeParser, FileWalker},
 };
 use std::{path::Path, sync::Mutex, time::Instant};
@@ -54,6 +54,7 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         };
 
         let (symbols, _) = CodeParser::parse_file(&file.path, &content, &file.extension);
+        // Outline is collected separately using parse_file_all after files are persisted
 
         let file_info = FileInfo {
             id: uuid::Uuid::new_v4().to_string(),
@@ -86,7 +87,10 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         let (_, imports) = CodeParser::parse_file(&file.path, &content, &file.extension);
 
         // Get source file UUID (must exist in path_to_id — files are already collected)
-        let source_id = path_to_id.get(&file.relative_path).cloned().unwrap_or_default();
+        let source_id = path_to_id
+            .get(&file.relative_path)
+            .cloned()
+            .unwrap_or_default();
 
         let resolved_imports: Vec<engine::models::ImportInfo> = imports
             .into_iter()
@@ -170,6 +174,44 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         }
     }
 
+    // Phase 3: Persist outline items using authoritative file UUIDs from path_to_id
+    let mut outline_skipped = 0usize;
+    let mut outline_errors = 0usize;
+    for file in &discovered {
+        let file_id = match path_to_id.get(&file.relative_path) {
+            Some(id) => id,
+            None => {
+                outline_skipped += 1;
+                continue;
+            }
+        };
+
+        let content = match std::fs::read_to_string(&file.path) {
+            Ok(c) => c,
+            Err(_) => {
+                outline_errors += 1;
+                continue;
+            }
+        };
+
+        let parse_result =
+            CodeParser::parse_file_all(&file.path, &content, &file.extension, file_id);
+
+        if !parse_result.outline.is_empty() {
+            if let Err(e) = repo.save_outline_items(file_id, &parse_result.outline) {
+                tracing::debug!("Failed to persist outline for {}: {}", file_id, e);
+                outline_errors += 1;
+            }
+        }
+    }
+
+    tracing::info!(
+        "Outline persistence: {} skipped (no file id), {} errors out of {} files",
+        outline_skipped,
+        outline_errors,
+        discovered.len()
+    );
+
     // Use persisted count as the authoritative number — what actually lands in the DB.
     // If >50% of non-empty imports fail to persist, surface it in the result so the
     // frontend can reflect a degraded scan rather than silently returning Ready.
@@ -205,7 +247,11 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
 
     {
         let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
-        *status = if degraded { ScanStatus::Error } else { ScanStatus::Ready };
+        *status = if degraded {
+            ScanStatus::Error
+        } else {
+            ScanStatus::Ready
+        };
     }
 
     // Track project root so AI commands can read files from disk
@@ -240,7 +286,10 @@ pub fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusResponse,
 // MARK: Graph Commands
 
 #[tauri::command]
-pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result<GraphData, String> {
+pub async fn get_graph(
+    project_id: String,
+    state: State<'_, AppState>,
+) -> Result<GraphData, String> {
     // Set building-graph state so UI can reflect progress
     {
         let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
@@ -252,7 +301,11 @@ pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result
 
     // Try to return cached graph first
     if let Ok(Some(cached)) = repo.get_graph_cache(&project_id) {
-        tracing::info!("Graph cache hit for {} ({}ms)", project_id, build_start.elapsed().as_millis());
+        tracing::info!(
+            "Graph cache hit for {} ({}ms)",
+            project_id,
+            build_start.elapsed().as_millis()
+        );
         {
             let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
             *status = ScanStatus::Ready;
@@ -264,7 +317,10 @@ pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result
     let files = repo.get_files(&project_id).map_err(|e| e.to_string())?;
 
     if files.is_empty() {
-        tracing::warn!("No files found for project {} — returning empty graph", project_id);
+        tracing::warn!(
+            "No files found for project {} — returning empty graph",
+            project_id
+        );
         {
             let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
             *status = ScanStatus::Error;
@@ -284,7 +340,9 @@ pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result
         .unwrap_or_else(|| format!("/projects/{}", project_id));
 
     let builder = GraphBuilder::new(root_path);
-    let mut graph = builder.build(&files, &all_imports).map_err(|e| e.to_string())?;
+    let mut graph = builder
+        .build(&files, &all_imports)
+        .map_err(|e| e.to_string())?;
 
     // ReactFlow expects edges to reference existing node ids.
     // Keep only internal edges that have both endpoints present in current node set.
@@ -325,6 +383,82 @@ pub fn get_node_details(node_id: String, state: State<'_, AppState>) -> Result<F
         .ok_or_else(|| format!("File not found: {}", node_id))
 }
 
+/// On-demand outline command.
+///
+/// 1. Try persisted outline from DB.
+/// 2. If empty, load FileInfo to get the relative path, resolve it against
+///    the session project_root (or look it up via DB), read the source file,
+///    parse it, persist the result, and return it.
+///
+/// Safe: read/parse errors yield an empty outline; unsupported files return [].
+#[tauri::command]
+pub fn get_node_outline(
+    node_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<OutlineItem>, String> {
+    let repo = ProjectRepository::new(&state.db);
+
+    // Step 1: fast path — return persisted outline if present
+    let cached = repo
+        .get_outline_items(&node_id)
+        .map_err(|e| e.to_string())?;
+    if !cached.is_empty() {
+        return Ok(cached);
+    }
+
+    // Step 2: on-demand fallback — generate outline if DB is empty
+    let file_info = match repo.get_file_by_id(&node_id).map_err(|e| e.to_string())? {
+        Some(f) => f,
+        None => return Ok(vec![]),
+    };
+
+    // Resolve absolute source path
+    let root_path = {
+        let pr = state.project_root.lock().map_err(|e| e.to_string())?;
+        if pr.is_empty() {
+            // Fallback: look up project root from DB (works after restart too)
+            repo.get_project_root_for_file(&node_id)
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default()
+        } else {
+            pr.clone()
+        }
+    };
+
+    if root_path.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let abs_path = Path::new(&root_path).join(&file_info.path);
+
+    let content = match std::fs::read_to_string(&abs_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!("get_node_outline: could not read {:?}: {}", abs_path, e);
+            return Ok(vec![]);
+        }
+    };
+
+    let parse_result = CodeParser::parse_file_all(
+        &abs_path.to_string_lossy(),
+        &content,
+        &file_info.extension,
+        &node_id,
+    );
+
+    if !parse_result.outline.is_empty() {
+        if let Err(e) = repo.save_outline_items(&node_id, &parse_result.outline) {
+            tracing::debug!(
+                "get_node_outline: failed to persist on-demand outline for {}: {}",
+                node_id,
+                e
+            );
+        }
+    }
+
+    Ok(parse_result.outline)
+}
+
 #[tauri::command]
 pub fn search_nodes(
     project_id: String,
@@ -357,14 +491,19 @@ pub fn search_nodes(
 // MARK: AI Commands
 
 #[tauri::command]
-pub fn configure_ai(config: engine::models::AIConfig, state: State<'_, AppState>) -> Result<(), String> {
+pub fn configure_ai(
+    config: engine::models::AIConfig,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut ai_config = state.ai_config.lock().map_err(|e| e.to_string())?;
     *ai_config = Some(config);
     Ok(())
 }
 
 #[tauri::command]
-pub fn get_ai_config(state: State<'_, AppState>) -> Result<Option<engine::models::AIConfig>, String> {
+pub fn get_ai_config(
+    state: State<'_, AppState>,
+) -> Result<Option<engine::models::AIConfig>, String> {
     let config = state.ai_config.lock().map_err(|e| e.to_string())?;
     Ok(config.clone())
 }
@@ -377,7 +516,11 @@ pub async fn explain_node(
 ) -> Result<NodeExplanation, String> {
     let (config, root_path) = {
         let cfg = state.ai_config.lock().map_err(|e| e.to_string())?.clone();
-        let root = state.project_root.lock().map_err(|e| e.to_string())?.clone();
+        let root = state
+            .project_root
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone();
         (cfg, root)
     };
 
@@ -411,13 +554,21 @@ pub async fn explain_node(
             generated_at: chrono::Utc::now().to_rfc3339(),
         });
 
-    // Build compact context (8KB cap + top-5 deps + top-3 dependents)
-    let context = ContextBuilder::build_node_context(
-        &file_content,
-        &file_info.path,
-        &graph,
-        &node_id,
-    );
+    // Load outline items for this file (non-blocking; empty outline is fine)
+    let outline = repo.get_outline_items(&node_id).unwrap_or_default();
+
+    // Build compact context — prefer semantic outline when available
+    let context = if !outline.is_empty() {
+        ContextBuilder::build_node_context_with_outline(
+            &file_content,
+            &file_info.path,
+            &graph,
+            &node_id,
+            &outline,
+        )
+    } else {
+        ContextBuilder::build_node_context(&file_content, &file_info.path, &graph, &node_id)
+    };
 
     // Build dependency labels list
     let deps: Vec<String> = graph
@@ -446,7 +597,11 @@ pub async fn chat(
 ) -> Result<engine::models::ChatResponse, String> {
     let (config, root_path) = {
         let cfg = state.ai_config.lock().map_err(|e| e.to_string())?.clone();
-        let root = state.project_root.lock().map_err(|e| e.to_string())?.clone();
+        let root = state
+            .project_root
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone();
         (cfg, root)
     };
 
@@ -518,9 +673,9 @@ pub async fn chat(
 // MARK: v2 Analysis Commands
 
 use engine::analysis::{
-    ArchitectureDetectionResult as EngineArchResult,
-    compute_impact, compute_graph_insights, ImpactAnalysisResult as EngineImpactResult,
-    graph_insights::GraphInsights as EngineGraphInsights, ImpactConfig, InsightsConfig,
+    compute_graph_insights, compute_impact, graph_insights::GraphInsights as EngineGraphInsights,
+    ArchitectureDetectionResult as EngineArchResult, ImpactAnalysisResult as EngineImpactResult,
+    ImpactConfig, InsightsConfig,
 };
 use serde::Serialize;
 
@@ -648,12 +803,7 @@ pub fn get_impact_analysis(
 ) -> Result<ImpactAnalysisResponse, String> {
     let timing_start = std::time::Instant::now();
 
-    let result = compute_impact(
-        &project_id,
-        &node_id,
-        &state.db,
-        &ImpactConfig::default(),
-    );
+    let result = compute_impact(&project_id, &node_id, &state.db, &ImpactConfig::default());
 
     let elapsed_ms = timing_start.elapsed().as_millis() as u64;
     tracing::info!(
@@ -792,7 +942,8 @@ pub fn export_view(
     Ok(ExportPayloadResponse {
         version: "2.0".to_string(),
         format,
-        graph_data: serde_json::from_str(&graph_json).unwrap_or(serde_json::json!({"nodes": [], "edges": []})),
+        graph_data: serde_json::from_str(&graph_json)
+            .unwrap_or(serde_json::json!({"nodes": [], "edges": []})),
         insights: insights_json,
         metadata: ExportMetadata {
             project_id,
@@ -848,8 +999,7 @@ mod export_view_tests {
 }
 
 // State helpers
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ScanStatus {
     #[default]
     Idle,
@@ -858,7 +1008,6 @@ pub enum ScanStatus {
     Ready,
     Error,
 }
-
 
 // MARK: v3 Workspace Commands
 
@@ -889,10 +1038,12 @@ pub struct SnapshotResponse {
 }
 
 #[tauri::command]
-pub fn create_workspace(name: String, state: State<'_, AppState>) -> Result<WorkspaceResponse, String> {
+pub fn create_workspace(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<WorkspaceResponse, String> {
     let repo = ProjectRepository::new(&state.db);
-    let (id, name_out, created_at) =
-        repo.create_workspace(&name).map_err(|e| e.to_string())?;
+    let (id, name_out, created_at) = repo.create_workspace(&name).map_err(|e| e.to_string())?;
     Ok(WorkspaceResponse {
         id,
         name: name_out,
@@ -903,17 +1054,15 @@ pub fn create_workspace(name: String, state: State<'_, AppState>) -> Result<Work
 #[tauri::command]
 pub fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<WorkspaceResponse>, String> {
     let repo = ProjectRepository::new(&state.db);
-    repo.list_workspaces()
-        .map_err(|e| e.to_string())
-        .map(|ws| {
-            ws.into_iter()
-                .map(|(id, name, created_at)| WorkspaceResponse {
-                    id,
-                    name,
-                    created_at,
-                })
-                .collect()
-        })
+    repo.list_workspaces().map_err(|e| e.to_string()).map(|ws| {
+        ws.into_iter()
+            .map(|(id, name, created_at)| WorkspaceResponse {
+                id,
+                name,
+                created_at,
+            })
+            .collect()
+    })
 }
 
 #[tauri::command]
@@ -953,9 +1102,9 @@ pub fn create_snapshot(
     state: State<'_, AppState>,
 ) -> Result<SnapshotResponse, String> {
     let repo = ProjectRepository::new(&state.db);
-    let (id, project_id_out, workspace_id_out, label_out, created_at, payload_json) =
-        repo.create_snapshot(&project_id, &label, workspace_id.as_deref())
-            .map_err(|e| e.to_string())?;
+    let (id, project_id_out, workspace_id_out, label_out, created_at, payload_json) = repo
+        .create_snapshot(&project_id, &label, workspace_id.as_deref())
+        .map_err(|e| e.to_string())?;
     Ok(SnapshotResponse {
         id,
         project_id: project_id_out,
@@ -974,9 +1123,20 @@ pub fn get_snapshot(
     let repo = ProjectRepository::new(&state.db);
     repo.get_snapshot(&snapshot_id)
         .map_err(|e| e.to_string())
-        .map(|opt| opt.map(|(id, project_id, workspace_id, label, created_at, payload_json)| {
-            SnapshotResponse { id, project_id, workspace_id, label, created_at, payload_json }
-        }))
+        .map(|opt| {
+            opt.map(
+                |(id, project_id, workspace_id, label, created_at, payload_json)| {
+                    SnapshotResponse {
+                        id,
+                        project_id,
+                        workspace_id,
+                        label,
+                        created_at,
+                        payload_json,
+                    }
+                },
+            )
+        })
 }
 
 // ─── Annotation commands ────────────────────────────────────────────────────────
@@ -1003,9 +1163,9 @@ pub fn add_comment(
     state: State<'_, AppState>,
 ) -> Result<AnnotationResponse, String> {
     let repo = ProjectRepository::new(&state.db);
-    let (id, project_id_out, node_id_out, author_out, kind_out, text_out, created_at) =
-        repo.add_comment(&project_id, &node_id, &author, &text, kind.as_deref())
-            .map_err(|e| e.to_string())?;
+    let (id, project_id_out, node_id_out, author_out, kind_out, text_out, created_at) = repo
+        .add_comment(&project_id, &node_id, &author, &text, kind.as_deref())
+        .map_err(|e| e.to_string())?;
     Ok(AnnotationResponse {
         id,
         project_id: project_id_out,
@@ -1026,17 +1186,20 @@ pub fn list_comments(
     let repo = ProjectRepository::new(&state.db);
     repo.list_comments(&project_id, node_id.as_deref())
         .map_err(|e| e.to_string())
-        .map(|cs| cs.into_iter().map(|r| AnnotationResponse {
-            id: r.0,
-            project_id: r.1,
-            node_id: r.2,
-            author: r.3,
-            kind: r.4,
-            text: r.5,
-            created_at: r.6,
-        }).collect())
+        .map(|cs| {
+            cs.into_iter()
+                .map(|r| AnnotationResponse {
+                    id: r.0,
+                    project_id: r.1,
+                    node_id: r.2,
+                    author: r.3,
+                    kind: r.4,
+                    text: r.5,
+                    created_at: r.6,
+                })
+                .collect()
+        })
 }
-
 
 #[tauri::command]
 pub fn list_snapshots(
@@ -1048,15 +1211,25 @@ pub fn list_snapshots(
     repo.list_snapshots(&project_id, workspace_id.as_deref())
         .map_err(|e| e.to_string())
         .map(|snaps| {
-            snaps.into_iter()
-                .map(|(id, project_id, workspace_id, label, created_at, payload_json): (String, String, Option<String>, String, String, Option<String>)| SnapshotResponse {
-                    id,
-                    project_id,
-                    workspace_id,
-                    label,
-                    created_at,
-                    payload_json,
-                })
+            snaps
+                .into_iter()
+                .map(
+                    |(id, project_id, workspace_id, label, created_at, payload_json): (
+                        String,
+                        String,
+                        Option<String>,
+                        String,
+                        String,
+                        Option<String>,
+                    )| SnapshotResponse {
+                        id,
+                        project_id,
+                        workspace_id,
+                        label,
+                        created_at,
+                        payload_json,
+                    },
+                )
                 .collect()
         })
 }
@@ -1093,8 +1266,8 @@ pub fn get_health_timeline(
         .map(|rows| HealthTimelineResponse {
             records: rows
                 .into_iter()
-                .map(|(id, recorded_at, overall_score, coupling_score, complexity_score, cycle_count, hotspot_count): (String, String, f64, f64, f64, i64, i64)| {
-                    HealthRecordResponse {
+                .map(
+                    |(
                         id,
                         recorded_at,
                         overall_score,
@@ -1102,8 +1275,18 @@ pub fn get_health_timeline(
                         complexity_score,
                         cycle_count,
                         hotspot_count,
-                    }
-                })
+                    ): (String, String, f64, f64, f64, i64, i64)| {
+                        HealthRecordResponse {
+                            id,
+                            recorded_at,
+                            overall_score,
+                            coupling_score,
+                            complexity_score,
+                            cycle_count,
+                            hotspot_count,
+                        }
+                    },
+                )
                 .collect(),
             project_id,
             from,

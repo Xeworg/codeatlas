@@ -18,6 +18,33 @@ export type SymbolKind =
   | 'impl'
   | 'unknown'
 
+export type OutlineItemKind =
+  | 'class'
+  | 'function'
+  | 'method'
+  | 'interface'
+  | 'type'
+  | 'enum'
+  | 'const'
+  | 'variable'
+  | 'module'
+  | 'field'
+  | 'struct'
+  | 'impl'
+  | 'unknown'
+
+export interface OutlineItem {
+  id: string
+  fileId: string
+  name: string
+  kind: OutlineItemKind
+  lineStart: number
+  lineEnd: number
+  columnStart?: number | null
+  columnEnd?: number | null
+  children?: OutlineItem[]
+}
+
 export type NodeType =
   | 'component'
   | 'route'

@@ -1,9 +1,10 @@
 // DetailPanel — shows metadata of selected node
 import { useEffect, useState } from 'react'
 import { useSelectedNodeId, useGraphData } from '../../stores/graphStore'
-import { getNodeDetails } from '../../lib/tauri-api'
-import type { FileInfo } from '../../lib/types'
+import { getNodeDetails, getNodeOutline } from '../../lib/tauri-api'
+import type { FileInfo, OutlineItem } from '../../lib/types'
 import { SymbolList } from './SymbolList'
+import { OutlineView } from './OutlineView'
 
 export function DetailPanel() {
   const selectedNodeId = useSelectedNodeId()
@@ -11,6 +12,10 @@ export function DetailPanel() {
   const [details, setDetails] = useState<FileInfo | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const [outline, setOutline] = useState<OutlineItem[]>([])
+  const [outlineLoading, setOutlineLoading] = useState(false)
+  const [outlineError, setOutlineError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!selectedNodeId) {
@@ -23,6 +28,21 @@ export function DetailPanel() {
       .then(setDetails)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false))
+  }, [selectedNodeId])
+
+  // Load outline independently
+  useEffect(() => {
+    if (!selectedNodeId) {
+      setOutline([])
+      setOutlineError(null)
+      return
+    }
+    setOutlineLoading(true)
+    setOutlineError(null)
+    getNodeOutline(selectedNodeId)
+      .then(setOutline)
+      .catch((e) => setOutlineError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setOutlineLoading(false))
   }, [selectedNodeId])
 
   if (!selectedNodeId) {
@@ -81,6 +101,14 @@ export function DetailPanel() {
           <span className="text-slate-500">Symbols:</span>{' '}
           <span className="text-slate-300">{details.symbols.length}</span>
         </div>
+      </div>
+
+      {/* Outline section */}
+      <div>
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
+          Outline
+        </h3>
+        <OutlineView items={outline} loading={outlineLoading} error={outlineError} />
       </div>
 
       {/* Dependencies */}

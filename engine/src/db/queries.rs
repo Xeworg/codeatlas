@@ -3,7 +3,7 @@
 use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
 use std::sync::Mutex;
 
-use crate::models::{FileInfo, ImportInfo, ScanResult};
+use crate::models::{FileInfo, ImportInfo, OutlineItem, ScanResult};
 
 /// Thread-safe wrapper around rusqlite::Connection.
 /// rusqlite::Connection is NOT Send+Sync. Guarding all access
@@ -137,25 +137,72 @@ impl<'pool> ProjectRepository<'pool> {
         })
     }
 
+    /// Hydrate symbols from DB for a given file ID.
+    fn get_symbols_for_file(
+        &self,
+        conn: &Connection,
+        file_id: &str,
+    ) -> SqliteResult<Vec<crate::models::SymbolInfo>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, kind, file_id, line_start, line_end, is_exported\n             FROM symbols WHERE file_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![file_id], |row| {
+            let kind_str: String = row.get(2)?;
+            let kind = match kind_str.as_str() {
+                "class" => crate::models::SymbolKind::Class,
+                "function" => crate::models::SymbolKind::Function,
+                "arrowfunction" => crate::models::SymbolKind::ArrowFunction,
+                "method" => crate::models::SymbolKind::Method,
+                "interface" => crate::models::SymbolKind::Interface,
+                "typealias" => crate::models::SymbolKind::TypeAlias,
+                "enum" => crate::models::SymbolKind::Enum,
+                "variable" => crate::models::SymbolKind::Variable,
+                "const" => crate::models::SymbolKind::Const,
+                "struct" => crate::models::SymbolKind::Struct,
+                "impl" => crate::models::SymbolKind::Impl,
+                _ => crate::models::SymbolKind::Unknown,
+            };
+            Ok(crate::models::SymbolInfo {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                kind,
+                file_id: row.get(3)?,
+                line_start: row.get::<_, i64>(4)? as u32,
+                line_end: row.get::<_, i64>(5)? as u32,
+                exports: row.get::<_, Option<bool>>(6)?.unwrap_or(false),
+            })
+        })?;
+        rows.collect()
+    }
+
     pub fn get_files(&self, project_id: &str) -> SqliteResult<Vec<FileInfo>> {
         self.pool.with_connection(|conn| {
-            let mut stmt = conn.prepare(
+            let mut files_stmt = conn.prepare(
                 "SELECT id, path, name, extension, lines
                      FROM files WHERE project_id = ?1",
             )?;
 
-            let files = stmt.query_map(params![project_id], |row| {
-                Ok(FileInfo {
-                    id: row.get(0)?,
-                    path: row.get(1)?,
-                    name: row.get(2)?,
-                    extension: row.get(3)?,
-                    lines: row.get::<_, i64>(4)? as u32,
-                    symbols: vec![],
-                })
-            })?;
-
-            files.collect()
+            let mut files = Vec::new();
+            let mut rows = files_stmt.query(params![project_id])?;
+            while let Some(row) = rows.next()? {
+                let file_id: String = row.get(0)?;
+                let path: String = row.get(1)?;
+                let name: String = row.get(2)?;
+                let ext: String = row.get(3)?;
+                let lines: i64 = row.get(4)?;
+                let symbols = self
+                    .get_symbols_for_file(conn, &file_id)
+                    .unwrap_or_default();
+                files.push(FileInfo {
+                    id: file_id,
+                    path,
+                    name,
+                    extension: ext,
+                    lines: lines as u32,
+                    symbols,
+                });
+            }
+            Ok(files)
         })
     }
 
@@ -261,21 +308,85 @@ impl<'pool> ProjectRepository<'pool> {
     /// Get file info by ID.
     pub fn get_file_by_id(&self, file_id: &str) -> SqliteResult<Option<FileInfo>> {
         self.pool.with_connection(|conn| {
-            conn.query_row(
+            let row = match conn.query_row(
                 "SELECT id, path, name, extension, lines FROM files WHERE id = ?1",
                 params![file_id],
                 |row| {
-                    Ok(FileInfo {
-                        id: row.get(0)?,
-                        path: row.get(1)?,
-                        name: row.get(2)?,
-                        extension: row.get(3)?,
-                        lines: row.get::<_, i64>(4)? as u32,
-                        symbols: vec![],
-                    })
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
                 },
+            ) {
+                Ok(r) => r,
+                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+                Err(e) => return Err(e),
+            };
+            let symbols = self.get_symbols_for_file(conn, file_id).unwrap_or_default();
+            Ok(Some(FileInfo {
+                id: row.0,
+                path: row.1,
+                name: row.2,
+                extension: row.3,
+                lines: row.4 as u32,
+                symbols,
+            }))
+        })
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // PR2: Outline items persistence
+    // ──────────────────────────────────────────────────────────────
+
+    /// Returns the project root path for a file ID, or None if the file
+    /// or its project is not found. Used by on-demand outline fallback
+    /// when the current session's project_root is not set.
+    pub fn get_project_root_for_file(&self, file_id: &str) -> SqliteResult<Option<String>> {
+        self.pool.with_connection(|conn| {
+            conn.query_row(
+                "SELECT p.root_path FROM projects p JOIN files f ON f.project_id = p.id WHERE f.id = ?1",
+                params![file_id],
+                |row| row.get(0),
             )
             .optional()
+        })
+    }
+
+    /// Save or replace outline items for a file. Uses INSERT OR REPLACE
+    /// so rescan of the same file updates the outline JSON.
+    pub fn save_outline_items(&self, file_id: &str, items: &[OutlineItem]) -> SqliteResult<()> {
+        self.pool.with_connection(|conn| {
+            let json = serde_json::to_string(items).map_err(|e| {
+                rusqlite::Error::InvalidParameterName(format!("outline serialization: {}", e))
+            })?;
+            conn.execute(
+                "INSERT OR REPLACE INTO outline_items (file_id, outline_json, generated_at)\n                 VALUES (?1, ?2, datetime('now'))",
+                params![file_id, json],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Get outline items for a file. Returns an empty vector if the file
+    /// has no outline (or does not exist), matching safe fallback behavior.
+    pub fn get_outline_items(&self, file_id: &str) -> SqliteResult<Vec<OutlineItem>> {
+        self.pool.with_connection(|conn| {
+            let json: Option<String> = conn
+                .query_row(
+                    "SELECT outline_json FROM outline_items WHERE file_id = ?1",
+                    params![file_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match json {
+                Some(j) => serde_json::from_str(&j).map_err(|e| {
+                    rusqlite::Error::InvalidParameterName(format!("outline deserialization: {}", e))
+                }),
+                None => Ok(Vec::new()),
+            }
         })
     }
 
@@ -1123,7 +1234,7 @@ struct NodeRaw {
 mod tests {
     use super::*;
     use crate::models::ScanStatus;
-    use crate::models::{SymbolInfo, SymbolKind};
+    use crate::models::{OutlineItemKind, SymbolInfo, SymbolKind};
 
     #[test]
     fn save_and_retrieve_project() {
@@ -1273,6 +1384,136 @@ mod tests {
 
         let not_found = repo.get_file_by_id("nonexistent").unwrap();
         assert!(not_found.is_none());
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // PR? : Symbol hydration tests
+    // ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn get_files_returns_symbols_hydrated() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        // Save a project with files that have symbols
+        let result = ScanResult {
+            project_id: "proj-symbols".into(),
+            project_name: "SymbolsTest".into(),
+            root_path: "/tmp/symbols".into(),
+            files_count: 1,
+            symbols_count: 3,
+            imports_count: 0,
+            files: vec![FileInfo {
+                id: "f-sym-test".into(),
+                path: "src/hydrated.ts".into(),
+                name: "hydrated.ts".into(),
+                extension: "ts".into(),
+                lines: 20,
+                symbols: vec![
+                    SymbolInfo {
+                        id: "sym-1".into(),
+                        name: "TopClass".into(),
+                        kind: SymbolKind::Class,
+                        file_id: "f-sym-test".into(),
+                        line_start: 1,
+                        line_end: 10,
+                        exports: true,
+                    },
+                    SymbolInfo {
+                        id: "sym-2".into(),
+                        name: "helperFn".into(),
+                        kind: SymbolKind::Function,
+                        file_id: "f-sym-test".into(),
+                        line_start: 12,
+                        line_end: 18,
+                        exports: true,
+                    },
+                    SymbolInfo {
+                        id: "sym-3".into(),
+                        name: "UnusedConst".into(),
+                        kind: SymbolKind::Const,
+                        file_id: "f-sym-test".into(),
+                        line_start: 19,
+                        line_end: 20,
+                        exports: false,
+                    },
+                ],
+            }],
+            scan_duration_ms: 0,
+            status: ScanStatus::Ready,
+            error: None,
+        };
+        repo.save_scan_result(&result).unwrap();
+
+        // get_files should return FileInfo with symbols hydrated from DB
+        let files = repo.get_files("proj-symbols").unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].symbols.len(), 3);
+        assert!(files[0].symbols.iter().any(|s| s.name == "TopClass"));
+        assert!(files[0].symbols.iter().any(|s| s.name == "helperFn"));
+        assert!(files[0].symbols.iter().any(|s| s.name == "UnusedConst"));
+        assert!(files[0].symbols.iter().any(|s| s.kind == SymbolKind::Class));
+        assert!(files[0]
+            .symbols
+            .iter()
+            .any(|s| s.kind == SymbolKind::Function));
+    }
+
+    #[test]
+    fn get_file_by_id_returns_symbols_hydrated() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        let result = ScanResult {
+            project_id: "proj-fbid".into(),
+            project_name: "FileByIdTest".into(),
+            root_path: "/tmp/fbid".into(),
+            files_count: 1,
+            symbols_count: 2,
+            imports_count: 0,
+            files: vec![FileInfo {
+                id: "f-bid-test".into(),
+                path: "src/by_id.ts".into(),
+                name: "by_id.ts".into(),
+                extension: "ts".into(),
+                lines: 30,
+                symbols: vec![
+                    SymbolInfo {
+                        id: "sym-b1".into(),
+                        name: "TargetInterface".into(),
+                        kind: SymbolKind::Interface,
+                        file_id: "f-bid-test".into(),
+                        line_start: 1,
+                        line_end: 5,
+                        exports: true,
+                    },
+                    SymbolInfo {
+                        id: "sym-b2".into(),
+                        name: "targetFn".into(),
+                        kind: SymbolKind::Function,
+                        file_id: "f-bid-test".into(),
+                        line_start: 7,
+                        line_end: 25,
+                        exports: true,
+                    },
+                ],
+            }],
+            scan_duration_ms: 0,
+            status: ScanStatus::Ready,
+            error: None,
+        };
+        repo.save_scan_result(&result).unwrap();
+
+        let file = repo.get_file_by_id("f-bid-test").unwrap();
+        assert!(file.is_some());
+        let f = file.unwrap();
+        assert_eq!(f.name, "by_id.ts");
+        assert_eq!(f.symbols.len(), 2);
+        assert!(f.symbols.iter().any(|s| s.name == "TargetInterface"));
+        assert!(f.symbols.iter().any(|s| s.name == "targetFn"));
+        assert!(f.symbols.iter().any(|s| s.kind == SymbolKind::Interface));
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -1446,6 +1687,177 @@ mod tests {
         assert_eq!(comments[0].4, "todo");
         assert_eq!(comments[1].4, "review");
         assert_eq!(comments[2].4, "issue");
+    }
+
+    // ====================================================================
+    // PR2 — Outline Items persistence
+    // ====================================================================
+
+    fn migrated_pool() -> DbPool {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let conn = pool.0.lock().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        super::super::migrations::run_pending_migrations(&conn).unwrap();
+        drop(conn);
+        pool
+    }
+
+    fn seed_outline_file(repo: &ProjectRepository<'_>, file_id: &str) {
+        repo.save_scan_result(&ScanResult {
+            project_id: "outline-proj".into(),
+            project_name: "OutlineProject".into(),
+            root_path: "/tmp/outline-project".into(),
+            files_count: 1,
+            symbols_count: 0,
+            imports_count: 0,
+            files: vec![FileInfo {
+                id: file_id.into(),
+                path: "src/user_service.ts".into(),
+                name: "user_service.ts".into(),
+                extension: "ts".into(),
+                symbols: vec![],
+                lines: 20,
+            }],
+            scan_duration_ms: 1,
+            status: ScanStatus::Ready,
+            error: None,
+        })
+        .unwrap();
+    }
+
+    fn sample_outline(file_id: &str, name: &str) -> Vec<OutlineItem> {
+        vec![OutlineItem {
+            id: format!("outline:{file_id}:class:1:10:{name}"),
+            file_id: file_id.into(),
+            name: name.into(),
+            kind: OutlineItemKind::Class,
+            line_start: 1,
+            line_end: 10,
+            column_start: Some(0),
+            column_end: Some(1),
+            children: vec![OutlineItem {
+                id: format!("outline:{file_id}:method:2:4:getUser"),
+                file_id: file_id.into(),
+                name: "getUser".into(),
+                kind: OutlineItemKind::Method,
+                line_start: 2,
+                line_end: 4,
+                column_start: Some(4),
+                column_end: Some(11),
+                children: vec![],
+            }],
+        }]
+    }
+
+    #[test]
+    fn outline_save_and_retrieve_hierarchy() {
+        let pool = migrated_pool();
+        let repo = ProjectRepository::new(&pool);
+        seed_outline_file(&repo, "file-outline-1");
+
+        let outline = sample_outline("file-outline-1", "UserService");
+        repo.save_outline_items("file-outline-1", &outline).unwrap();
+
+        let retrieved = repo.get_outline_items("file-outline-1").unwrap();
+        assert_eq!(retrieved.len(), 1);
+        assert_eq!(retrieved[0].name, "UserService");
+        assert_eq!(retrieved[0].children.len(), 1);
+        assert_eq!(retrieved[0].children[0].name, "getUser");
+    }
+
+    #[test]
+    fn outline_retrieve_empty_for_unknown_file() {
+        let pool = migrated_pool();
+        let repo = ProjectRepository::new(&pool);
+
+        let retrieved = repo.get_outline_items("missing-file").unwrap();
+        assert!(retrieved.is_empty());
+    }
+
+    #[test]
+    fn outline_replace_on_resave() {
+        let pool = migrated_pool();
+        let repo = ProjectRepository::new(&pool);
+        seed_outline_file(&repo, "file-outline-2");
+
+        repo.save_outline_items(
+            "file-outline-2",
+            &sample_outline("file-outline-2", "FirstService"),
+        )
+        .unwrap();
+        repo.save_outline_items(
+            "file-outline-2",
+            &sample_outline("file-outline-2", "SecondService"),
+        )
+        .unwrap();
+
+        let retrieved = repo.get_outline_items("file-outline-2").unwrap();
+        assert_eq!(retrieved.len(), 1);
+        assert_eq!(retrieved[0].name, "SecondService");
+    }
+
+    #[test]
+    fn outline_delete_cascades_with_file() {
+        let pool = migrated_pool();
+        let repo = ProjectRepository::new(&pool);
+        seed_outline_file(&repo, "file-outline-3");
+        repo.save_outline_items(
+            "file-outline-3",
+            &sample_outline("file-outline-3", "DeletedService"),
+        )
+        .unwrap();
+
+        pool.with_connection(|conn| {
+            conn.execute("DELETE FROM files WHERE id = ?1", params!["file-outline-3"])?;
+            Ok(())
+        })
+        .unwrap();
+
+        let retrieved = repo.get_outline_items("file-outline-3").unwrap();
+        assert!(retrieved.is_empty());
+    }
+
+    #[test]
+    fn get_project_root_for_file_returns_root() {
+        let pool = migrated_pool();
+        let repo = ProjectRepository::new(&pool);
+
+        // Seed a file via scan result with a known root path
+        let result = ScanResult {
+            project_id: "proj-root-test".into(),
+            project_name: "RootTest".into(),
+            root_path: "/custom/root/path".into(),
+            files_count: 1,
+            symbols_count: 0,
+            imports_count: 0,
+            files: vec![FileInfo {
+                id: "file-root-1".into(),
+                path: "src/main.ts".into(),
+                name: "main.ts".into(),
+                extension: "ts".into(),
+                symbols: vec![],
+                lines: 10,
+            }],
+            scan_duration_ms: 10,
+            status: ScanStatus::Ready,
+            error: None,
+        };
+        repo.save_scan_result(&result).unwrap();
+
+        let root = repo.get_project_root_for_file("file-root-1").unwrap();
+        assert_eq!(root, Some("/custom/root/path".into()));
+    }
+
+    #[test]
+    fn get_project_root_for_file_unknown_file() {
+        let pool = migrated_pool();
+        let repo = ProjectRepository::new(&pool);
+
+        let root = repo
+            .get_project_root_for_file("nonexistent-file-id")
+            .unwrap();
+        assert_eq!(root, None);
     }
 
     // ====================================================================
