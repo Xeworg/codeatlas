@@ -145,11 +145,20 @@ pub struct Reference {
 // ─────────────────────────────────────────────────────────────────────────────
 // ParseResult — aggregated output from a single parse pass
 // ─────────────────────────────────────────────────────────────────────────────
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ParseResult {
     pub symbols: Vec<SymbolInfo>,
     pub imports: Vec<ImportInfo>,
     pub outline: Vec<OutlineItem>,
+    /// Lexical classification of the top-level binding (default: `Const`).
+    /// Additive; pre-existing consumers ignore it.
+    #[serde(default)]
+    pub lexical_kind: LexicalValueKind,
+    /// Cross-symbol references observed during the AST pass.
+    /// Additive; pre-existing consumers see an empty vec.
+    #[serde(default)]
+    pub references: Vec<Reference>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -16,6 +16,8 @@ pub mod typescript;
 
 #[cfg(test)]
 mod ir_tests;
+#[cfg(test)]
+mod parse_result_tests;
 
 pub use crate::models::{OutlineItem, ParseResult};
 pub use registry::ParserRegistry;
