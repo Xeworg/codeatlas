@@ -9,6 +9,7 @@
 //!
 //! The registry is pre-populated with all supported parsers.
 
+pub mod python_stub;
 pub mod registry;
 pub mod rust;
 pub mod traits;

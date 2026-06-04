@@ -1,6 +1,9 @@
 //! ParserRegistry — extension-to-parser dispatch with safe fallback.
 
-use super::{rust::RustParser, traits::LanguageParser, typescript::TypeScriptParser};
+use super::{
+    python_stub::PythonParser, rust::RustParser, traits::LanguageParser,
+    typescript::TypeScriptParser,
+};
 use crate::models::ParseResult;
 
 /// Registry of language parsers with fallback for unsupported extensions.
@@ -16,6 +19,7 @@ impl ParserRegistry {
         };
         registry.register(TypeScriptParser::new());
         registry.register(RustParser::new());
+        registry.register(PythonParser::new());
         registry
     }
 
