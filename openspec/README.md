@@ -4,7 +4,7 @@ Este directorio contiene artefactos SDD de CodeAtlas.
 
 ## Estado
 
-- **Versiones archivadas:** v1-mvp-core (2026-06-01), v2-advanced-analysis (2026-06-01)
+- **Versiones archivadas:** v1-mvp-core (2026-06-01), v2-advanced-analysis (2026-06-01), robust-logging-observability (2026-06-04)
 - **Versión activa:** v3 — SDD pendiente de iniciar
 - Modo: **interactive**
 - Store: **OpenSpec + Engram**
@@ -19,6 +19,7 @@ Ninguno. Para iniciar v3, ejecutar `/sdd-init` o equivalente y avanzar las fases
 
 - `openspec/changes/archive/2026-06-01-v1-mvp-core/` — v1 core, verificado y archivado
 - `openspec/changes/archive/2026-06-01-v2-advanced-analysis/` — v2 advanced-analysis, verificado PASS con excepciones documentadas (NFR benchmarks scaffold, degraded-mode 4/8, App wiring T5.6 diferido)
+- `openspec/changes/archive/2026-06-04-robust-logging-observability/` — logging robusto, normalización de errores frontend, tracing backend y logs dev por ejecución
 
 ## Fases SDD esperadas
 
