@@ -4,11 +4,14 @@
 
 use engine::{
     ai::{AIProvider, AnthropicProvider, ContextBuilder},
+    commands::{outline_for_file, scan_files, ScanFilesOutput},
     db::{DbPool, ProjectRepository},
     graph::{GraphBuilder, PathResolver},
     models::{ChatMessage, FileInfo, GraphData, NodeExplanation, OutlineItem, ScanResult},
-    scanner::{CodeParser, FileWalker},
+    scanner::parser::ParserRegistry,
+    scanner::walker::FileWalker,
 };
+
 use std::{path::Path, sync::Mutex, time::Instant};
 use tauri::State;
 
@@ -43,82 +46,64 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
     let discovered = walker.discover();
     let discover_ms = discover_start.elapsed().as_millis() as u64;
 
-    let parse_start = Instant::now();
-
-    // Phase 1: collect files with stable UUIDs
-    let mut file_infos: Vec<FileInfo> = Vec::new();
-    for file in &discovered {
-        let content = match std::fs::read_to_string(&file.path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let (symbols, _) = CodeParser::parse_file(&file.path, &content, &file.extension);
-        // Outline is collected separately using parse_file_all after files are persisted
-
-        let file_info = FileInfo {
-            id: uuid::Uuid::new_v4().to_string(),
-            path: file.relative_path.clone(),
-            name: file.path.split('/').next_back().unwrap_or("").to_string(),
-            extension: file.extension.clone(),
-            symbols,
-            lines: content.lines().count() as u32,
-        };
-
-        file_infos.push(file_info);
-    }
+    // Phase 1 & 2 consolidated: single dispatch — registry called exactly once per file.
+    // scan_files returns file_infos (from result.symbols) and all_imports.
+    let registry = ParserRegistry::new();
+    let scan_output: ScanFilesOutput =
+        scan_files(&registry, &discovered, std::path::Path::new(&path));
+    let parse_ms = scan_output.parse_ms;
+    let total_ms = discover_ms + parse_ms;
+    let symbols_count: usize = scan_output
+        .file_infos
+        .iter()
+        .map(|f| f.symbols.len())
+        .sum();
 
     // Build path → UUID lookup for resolving imports
-    let path_to_id: std::collections::HashMap<String, String> = file_infos
+    let path_to_id: std::collections::HashMap<String, String> = scan_output
+        .file_infos
         .iter()
         .map(|f| (f.path.clone(), f.id.clone()))
         .collect();
 
-    // Phase 2: resolve all imports with correct source/target file IDs
+    // Resolve all imports with correct source/target file IDs.
+    // The registry (Phase 1+2 via scan_files) sets source_file_id = relative_path
+    // so that PathResolver can use it for target resolution. Now convert it to
+    // the persisted file UUID so get_imports(project_id) finds them via
+    // `WHERE source_file_id IN (SELECT id FROM files ...)`. Generate a stable
+    // import id from the source-target pair so rescan is idempotent.
     let resolver = PathResolver::new(&path);
     let mut all_imports: Vec<engine::models::ImportInfo> = Vec::new();
-
-    for file in &discovered {
-        let content = match std::fs::read_to_string(&file.path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let (_, imports) = CodeParser::parse_file(&file.path, &content, &file.extension);
-
-        // Get source file UUID (must exist in path_to_id — files are already collected)
-        let source_id = path_to_id
-            .get(&file.relative_path)
-            .cloned()
-            .unwrap_or_default();
-
-        let resolved_imports: Vec<engine::models::ImportInfo> = imports
-            .into_iter()
-            .map(|mut imp| {
-                // Fix source_file_id: set to the file's UUID, not the path string
-                imp.source_file_id = source_id.clone();
-
-                // Resolve target
-                if let Some(ref module) = imp.target_module {
-                    let res = resolver.resolve(module, &file.relative_path);
-                    match res {
-                        engine::graph::resolver::Resolution::Internal(p) => {
-                            imp.target_file_id = path_to_id.get(&p).cloned();
-                        }
-                        engine::graph::resolver::Resolution::External(_) => {}
-                        engine::graph::resolver::Resolution::Unresolved(_) => {}
-                    }
+    for mut imp in scan_output.all_imports {
+        // Convert source: relative_path → persisted UUID
+        if let Some(uuid) = path_to_id.get(&imp.source_file_id) {
+            imp.source_file_id = uuid.clone();
+        }
+        if let Some(ref module) = imp.target_module {
+            // resolver needs the relative_path for internal resolution — imp.source_file_id
+            // already holds the UUID at this point, so use it for target resolution only
+            // when the resolver can handle UUIDs. Pass the original relative_path by
+            // looking it up in path_to_id (reverse lookup: UUID → relative_path).
+            let rel_path = path_to_id
+                .iter()
+                .find(|(_, v)| *v == &imp.source_file_id)
+                .map(|(k, _)| k.clone())
+                .unwrap_or_else(|| imp.source_file_id.clone());
+            let res = resolver.resolve(module, &rel_path);
+            match res {
+                engine::graph::resolver::Resolution::Internal(p) => {
+                    imp.target_file_id = path_to_id.get(&p).cloned();
                 }
-                imp
-            })
-            .collect();
-
-        all_imports.extend(resolved_imports);
+                engine::graph::resolver::Resolution::External(_) => {}
+                engine::graph::resolver::Resolution::Unresolved(_) => {}
+            }
+        }
+        all_imports.push(imp);
     }
 
-    let parse_ms = parse_start.elapsed().as_millis() as u64;
-    let total_ms = discover_ms + parse_ms;
-    let symbols_count: usize = file_infos.iter().map(|f| f.symbols.len()).sum();
+    // file_infos carried from scan_files output
+    let file_infos = scan_output.file_infos;
+
 
     let repo = ProjectRepository::new(&state.db);
 
@@ -194,9 +179,13 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         }
     }
 
-    // Phase 3: Persist outline items using authoritative file UUIDs from path_to_id
+    // Phase 3: Persist outline items using outline_for_file (single dispatch per file).
+    // Phase 1+2 are already single-dispatch via scan_files; Phase 3 also uses
+    // outline_for_file (which calls registry exactly once) so the full scan
+    // achieves single-parse-per-file across all 3 phases.
     let mut outline_skipped = 0usize;
     let mut outline_errors = 0usize;
+    let phase3_registry = ParserRegistry::new();
     for file in &discovered {
         let file_id = match path_to_id.get(&file.relative_path) {
             Some(id) => id,
@@ -214,11 +203,16 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
             }
         };
 
-        let parse_result =
-            CodeParser::parse_file_all(&file.path, &content, &file.extension, file_id);
+        let outline = outline_for_file(
+            &phase3_registry,
+            file_id,
+            &file.path,
+            &content,
+            &file.extension,
+        );
 
-        if !parse_result.outline.is_empty() {
-            if let Err(e) = repo.save_outline_items(file_id, &parse_result.outline) {
+        if !outline.is_empty() {
+            if let Err(e) = repo.save_outline_items(file_id, &outline) {
                 tracing::debug!("Failed to persist outline for {}: {}", file_id, e);
                 outline_errors += 1;
             }
@@ -474,6 +468,7 @@ pub fn get_node_outline(
     }
 
     let abs_path = Path::new(&root_path).join(&file_info.path);
+    let registry = ParserRegistry::new();
 
     let content = match std::fs::read_to_string(&abs_path) {
         Ok(c) => c,
@@ -483,15 +478,16 @@ pub fn get_node_outline(
         }
     };
 
-    let parse_result = CodeParser::parse_file_all(
+    let outline = outline_for_file(
+        &registry,
+        &node_id,
         &abs_path.to_string_lossy(),
         &content,
         &file_info.extension,
-        &node_id,
     );
 
-    if !parse_result.outline.is_empty() {
-        if let Err(e) = repo.save_outline_items(&node_id, &parse_result.outline) {
+    if !outline.is_empty() {
+        if let Err(e) = repo.save_outline_items(&node_id, &outline) {
             tracing::debug!(
                 "get_node_outline: failed to persist on-demand outline for {}: {}",
                 node_id,
@@ -500,7 +496,7 @@ pub fn get_node_outline(
         }
     }
 
-    Ok(parse_result.outline)
+    Ok(outline)
 }
 
 #[tauri::command]

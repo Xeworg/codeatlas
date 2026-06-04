@@ -1,49 +1,37 @@
 //! Tree-sitter-based code parser for JS, TS, and Rust.
-
-use tree_sitter::{Language, Parser, Tree};
+//!
+//! This module provides a backwards-compatible shim layer. The intended API is:
+//! - `engine::commands::scan_files` / `outline_for_file` for higher-level
+//!   program-level scan orchestration (single-parse-per-file).
+//! - `ParserRegistry::parse_file` for direct registry dispatch.
+//! - `CodeParser::parse_file` (deprecated) for any remaining legacy call sites.
+//!   Converts a `ParseResult` to the legacy `(symbols, imports)` tuple.
 
 use crate::models::{ImportInfo, ParseResult, SymbolInfo, SymbolKind};
-
+use tree_sitter::Tree;
 use super::parser::ParserRegistry;
 
 pub struct CodeParser;
 
 impl CodeParser {
+    /// Parse a file and return symbols and imports (legacy tuple interface).
+    ///
+    /// # Deprecated
+    ///
+    /// Use `ParserRegistry::parse_file` instead and extract
+    /// `(result.symbols, result.imports)` from the `ParseResult`.
+    /// For program-level scans, prefer `engine::commands::scan_files` or
+    /// `engine::commands::outline_for_file`.
+    #[deprecated(
+        note = "use ParserRegistry::parse_file or engine::commands::{scan_files, outline_for_file} instead"
+    )]
     pub fn parse_file(
         path: &str,
         content: &str,
         extension: &str,
     ) -> (Vec<SymbolInfo>, Vec<ImportInfo>) {
-        let language_fn = match extension {
-            "ts" | "tsx" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
-            "js" | "jsx" => tree_sitter_javascript::LANGUAGE,
-            "rs" => tree_sitter_rust::LANGUAGE,
-            _ => return (vec![], vec![]),
-        };
-
-        let mut parser = Parser::new();
-        let language: Language = language_fn.into();
-        if parser.set_language(&language).is_err() {
-            return (vec![], vec![]);
-        }
-
-        let tree = match parser.parse(content, None) {
-            Some(t) => t,
-            None => return (vec![], vec![]),
-        };
-
-        let mut symbols = vec![];
-        let mut imports = vec![];
-
-        match extension {
-            "ts" | "tsx" | "js" | "jsx" => {
-                Self::extract_ts_symbols(&tree, path, content, &mut symbols, &mut imports)
-            }
-            "rs" => Self::extract_rust_symbols(&tree, path, content, &mut symbols, &mut imports),
-            _ => {}
-        }
-
-        (symbols, imports)
+        let result = ParserRegistry::default().parse_file(path, content, extension, "");
+        (result.symbols, result.imports)
     }
 
     pub fn parse_file_all(
@@ -55,6 +43,7 @@ impl CodeParser {
         ParserRegistry::default().parse_file(path, content, extension, file_id)
     }
 
+    #[allow(dead_code)]
     fn extract_ts_symbols(
         tree: &Tree,
         file_path: &str,
@@ -147,6 +136,7 @@ impl CodeParser {
     }
 
     /// Maps tree-sitter node kinds to SymbolKind for TypeScript declarations.
+    #[allow(dead_code)]
     fn ts_symbol_kind(kind: &str) -> Option<SymbolKind> {
         match kind {
             "class_declaration" => Some(SymbolKind::Class),
@@ -161,6 +151,7 @@ impl CodeParser {
     }
 
     /// Extract declaration name, handling nested names for lexical_declaration.
+    #[allow(dead_code)]
     fn ts_declaration_name<'a>(
         node: &'a tree_sitter::Node<'a>,
         bytes: &'a [u8],
@@ -181,6 +172,7 @@ impl CodeParser {
         None
     }
 
+    #[allow(dead_code)]
     fn extract_rust_symbols(
         tree: &Tree,
         file_path: &str,
@@ -265,6 +257,7 @@ function calculateTotal(items) {
 }
 module.exports = { calculateTotal };
 "#;
+        #[allow(deprecated)]
         let (symbols, imports) = CodeParser::parse_file("test.js", code, "js");
 
         // Should find at least one function symbol
@@ -285,6 +278,7 @@ impl UserRepository {
     pub fn find_by_id(&self, id: u64) -> Option<User> { None }
 }
 "#;
+        #[allow(deprecated)]
         let (symbols, _imports) = CodeParser::parse_file("lib.rs", code, "rs");
 
         assert!(symbols.iter().any(|s| s.name == "UserRepository"));
@@ -296,6 +290,7 @@ impl UserRepository {
         let code = r#"import { useState, useEffect } from "react";
 import type { User } from "./types";
 export default App;"#;
+        #[allow(deprecated)]
         let (_symbols, imports) = CodeParser::parse_file("App.tsx", code, "tsx");
 
         assert_eq!(imports.len(), 2);
@@ -321,5 +316,35 @@ class UserService {
             .iter()
             .flat_map(|o| o.children.iter())
             .any(|o| o.name == "getUser"));
+    }
+
+    /// Shim parity test: parse_file and parse_file_all must produce
+    /// symbols and imports from the same registry-backed ParseResult.
+    #[test]
+    fn shim_parity_symbols_and_imports_equal() {
+        let code = r#"import { useState } from "react";
+export class UserService {
+    getUser() { return null; }
+}"#;
+        #[allow(deprecated)]
+        let (symbols, imports) = CodeParser::parse_file("Service.ts", code, "ts");
+        let result = CodeParser::parse_file_all("Service.ts", code, "ts", "test-id");
+
+        // Both paths derive from the same ParseResult, so field equality holds.
+        assert_eq!(
+            symbols.len(),
+            result.symbols.len(),
+            "shim symbols count must match registry result"
+        );
+        // Check each symbol's name (stable fields)
+        for (shim_sym, result_sym) in symbols.iter().zip(result.symbols.iter()) {
+            assert_eq!(shim_sym.name, result_sym.name);
+            assert_eq!(shim_sym.kind, result_sym.kind);
+        }
+        assert_eq!(
+            imports.len(),
+            result.imports.len(),
+            "shim imports count must match registry result"
+        );
     }
 }

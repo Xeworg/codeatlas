@@ -5,6 +5,7 @@
 
 pub mod ai;
 pub mod analysis;
+pub mod commands;
 pub mod db;
 pub mod graph;
 pub mod models;
