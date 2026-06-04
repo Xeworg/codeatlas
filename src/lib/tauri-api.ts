@@ -50,6 +50,24 @@ function toApiError(err: unknown, fallbackCode: ErrorCode = 'INTERNAL'): ApiErro
   return { code, message: msg }
 }
 
+/**
+ * Extract a human-readable message from any thrown value.
+ * Handles Error instances, plain objects, strings, and null/undefined.
+ * Preserves `{ code, message }` shape for downstream consumers.
+ */
+export function getErrorMessage(err: unknown): string {
+  if (err === null || err === undefined) return 'Unknown error'
+  if (typeof err === 'string') return err
+  if (typeof err === 'object' && 'message' in err) {
+    const msg = String((err as Record<string, unknown>).message)
+    if ('code' in err && typeof (err as Record<string, unknown>).code === 'string') {
+      return `${(err as Record<string, unknown>).code} — ${msg}`
+    }
+    return msg
+  }
+  return 'Unknown error'
+}
+
 // MARK: Project & Scanning ---
 
 export async function scanProject(path: string): Promise<ScanResult> {

@@ -4,18 +4,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+pub mod logging;
 
 use commands::AppState;
 use std::sync::Mutex;
 use tauri::Manager;
 
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .init();
+    // Initialize tracing. In dev builds this installs a per-execution
+    // non-blocking file writer at `<repo>/logs/dev-runs/codeatlas-dev-*.log`
+    // in addition to the existing stderr writer, so the agent/developer can
+    // inspect a readable execution log after a run. The dev default level is
+    // DEBUG unless `RUST_LOG` overrides it. Release builds keep the previous
+    // console-only INFO-default behavior.
+    //
+    // The guard (if returned) must live for the whole `run()` lifetime;
+    // dropping it flushes and stops the background log writer thread.
+    let _log_guard = logging::init_dev_file_logging(&logging::compile_time_repo_root());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

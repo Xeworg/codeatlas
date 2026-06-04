@@ -26,6 +26,7 @@ import { useGraphStore, useSelectedNodeId } from './stores/graphStore'
 import {
   scanProject,
   getGraph,
+  getErrorMessage,
   getArchitectureDetection,
   getImpactAnalysis,
   getGraphInsights,
@@ -150,7 +151,7 @@ function App() {
           const laid = buildLayout(graph)
           setGraphData(laid)
         } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e)
+          const msg = getErrorMessage(e)
           setError(`Graph load failed: ${msg}`)
         } finally {
           setLoading(false)
@@ -159,7 +160,7 @@ function App() {
         setLoading(false)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(getErrorMessage(err))
       setLoading(false)
     }
   }, [setProject, setStatus, setScanResult, setError, setGraphData, setLoading])

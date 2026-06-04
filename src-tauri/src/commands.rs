@@ -137,10 +137,30 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         error: None,
     };
 
+    // ── scan lifecycle: START ────────────────────────────────────────────────────
+    tracing::info!(
+        project_id = %result.project_id,
+        root_path = %path,
+        files_discovered = %discovered.len(),
+        "scan started"
+    );
+
     if let Err(e) = repo.save_scan_result(&result) {
+        let err_str = e.to_string();
+        let mapped = if is_root_path_conflict(&err_str) {
+            map_save_scan_result_error(&err_str, &path, &result.project_id)
+        } else {
+            tracing::error!(
+                project_id = %result.project_id,
+                root_path = %path,
+                error_detail = %err_str,
+                "failed to save initial scan result"
+            );
+            format!("Failed to save scan result: {}", err_str)
+        };
         let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
         *status = ScanStatus::Error;
-        return Err(format!("Failed to save scan result: {}", e));
+        return Err(mapped);
     }
 
     // Transition to graph-building state while import edges are persisted.
@@ -240,9 +260,21 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
 
     // Persist final authoritative import count/status after import persistence.
     if let Err(e) = repo.save_scan_result(&result) {
+        let err_str = e.to_string();
+        let mapped = if is_root_path_conflict(&err_str) {
+            map_save_scan_result_error(&err_str, &path, &result.project_id)
+        } else {
+            tracing::error!(
+                project_id = %result.project_id,
+                root_path = %path,
+                error_detail = %err_str,
+                "failed to update scan result after import persistence"
+            );
+            format!("Failed to update scan result: {}", err_str)
+        };
         let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
         *status = ScanStatus::Error;
-        return Err(format!("Failed to update scan result: {}", e));
+        return Err(mapped);
     }
 
     {
@@ -259,6 +291,16 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         let mut pr = state.project_root.lock().map_err(|e| e.to_string())?;
         *pr = root_for_state;
     }
+
+    // ── scan lifecycle: COMPLETION ─────────────────────────────────────────────
+    tracing::info!(
+        project_id = %result.project_id,
+        files_persisted = %result.files_count,
+        symbols_count = %result.symbols_count,
+        imports_count = %result.imports_count,
+        duration_ms = %result.scan_duration_ms,
+        "scan completed"
+    );
 
     Ok(result)
 }
@@ -302,9 +344,10 @@ pub async fn get_graph(
     // Try to return cached graph first
     if let Ok(Some(cached)) = repo.get_graph_cache(&project_id) {
         tracing::info!(
-            "Graph cache hit for {} ({}ms)",
-            project_id,
-            build_start.elapsed().as_millis()
+            project_id = %project_id,
+            cache_hit = true,
+            elapsed_ms = %build_start.elapsed().as_millis() as u64,
+            "graph retrieved from cache"
         );
         {
             let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
@@ -318,8 +361,8 @@ pub async fn get_graph(
 
     if files.is_empty() {
         tracing::warn!(
-            "No files found for project {} — returning empty graph",
-            project_id
+            project_id = %project_id,
+            "graph build: no files found in DB"
         );
         {
             let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
@@ -359,12 +402,13 @@ pub async fn get_graph(
 
     let elapsed = build_start.elapsed().as_millis();
     tracing::info!(
-        "Graph built for {}: {} nodes, {} edges ({}ms), {} imports used",
-        project_id,
-        graph.nodes.len(),
-        graph.edges.len(),
-        elapsed,
-        all_imports.len()
+        project_id = %project_id,
+        cache_hit = false,
+        nodes_count = %graph.nodes.len(),
+        edges_count = %graph.edges.len(),
+        imports_considered = %all_imports.len(),
+        elapsed_ms = %elapsed as u64,
+        "graph built fresh"
     );
 
     {
@@ -956,19 +1000,8 @@ pub fn export_view(
 #[cfg(test)]
 mod export_view_tests {
     use super::*;
-    use engine::db::DbPool;
-    use std::sync::Mutex;
 
-    fn make_test_state(pool: DbPool) -> AppState {
-        AppState {
-            db: pool,
-            scan_status: Mutex::new(ScanStatus::Idle),
-            ai_config: Mutex::new(None),
-            project_root: Mutex::new(String::new()),
-        }
-    }
-
-    #[tokio::test]
+    #[test]
     fn export_view_json_format_returns_valid_payload() {
         // This test verifies the ExportPayloadResponse struct shape matches the contract.
         // The actual command will be tested via integration after implementation.
@@ -987,7 +1020,7 @@ mod export_view_tests {
         assert!(payload.insights.is_some());
     }
 
-    #[tokio::test]
+    #[test]
     fn export_view_invalid_format_returns_error() {
         // Verify that format validation logic would reject invalid formats.
         // Currently no implementation exists, so this tests the expected error contract.
@@ -997,6 +1030,49 @@ mod export_view_tests {
         assert!(!valid_formats.contains(&"svg"));
     }
 }
+
+// ─── Observability helpers ──────────────────────────────────────────────────
+
+/// Returns true if the given error string indicates a SQLite UNIQUE constraint
+/// violation on the `projects.root_path` column.
+///
+/// SQLite always uses uppercase in error messages. The check is case-sensitive.
+///
+/// # Arguments
+/// * `err` — the error string from `repo.save_scan_result()` (already `.to_string()`'d)
+pub fn is_root_path_conflict(err: &str) -> bool {
+    err.contains("UNIQUE constraint failed: projects.root_path")
+}
+
+/// Maps a `save_scan_result` error string to a user-facing message.
+///
+/// If the error is a `projects.root_path` UNIQUE constraint violation, returns
+/// `"Project already exists at path: {root_path}"`. Otherwise returns the original
+/// error string unchanged.
+///
+/// The root_path conflict case emits a WARN log here. Non-conflict errors are
+/// returned unchanged so callers can add operation-specific ERROR context.
+///
+/// # Arguments
+/// * `err` — the raw error string from `repo.save_scan_result()`
+/// * `root_path` — the project root path (for user-facing message)
+/// * `project_id` — the project ID (for logging context)
+pub fn map_save_scan_result_error(err: &str, root_path: &str, project_id: &str) -> String {
+    if is_root_path_conflict(err) {
+        tracing::warn!(
+            project_id = %project_id,
+            root_path = %root_path,
+            "projects.root_path UNIQUE constraint conflict"
+        );
+        format!("Project already exists at path: {}", root_path)
+    } else {
+        // Non-conflict errors: caller should emit ERROR tracing at the call site
+        err.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests;
 
 // State helpers
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
