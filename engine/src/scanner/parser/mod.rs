@@ -18,6 +18,8 @@ pub mod typescript;
 mod ir_tests;
 #[cfg(test)]
 mod parse_result_tests;
+#[cfg(test)]
+mod trait_tests;
 
 pub use crate::models::{OutlineItem, ParseResult};
 pub use registry::ParserRegistry;

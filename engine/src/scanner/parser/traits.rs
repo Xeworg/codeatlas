@@ -2,8 +2,12 @@
 //!
 //! Each parser can extract symbols, imports, and outline from a single pass
 //! via `parse_all()`. This avoids traversing the AST multiple times per file.
+//!
+//! IR hooks (`lexical_kind_for`, `extract_references`) are defaulted so a new
+//! language can plug in by implementing only the four core methods. Concrete
+//! parsers override the hooks to emit full IR for their grammar.
 
-use crate::models::ParseResult;
+use crate::models::{LexicalValueKind, ParseResult, Reference};
 
 /// Language parser that produces symbols, imports, and outline from a single parse.
 pub trait LanguageParser: Send + Sync {
@@ -22,6 +26,23 @@ pub trait LanguageParser: Send + Sync {
     /// Returns true if this parser supports the given extension.
     fn supports(&self, extension: &str) -> bool {
         self.extensions().contains(&extension)
+    }
+
+    /// Classify the lexical kind of a binding declaration node.
+    ///
+    /// Default: `LexicalValueKind::Function` (the most permissive fallback).
+    /// Concrete parsers override this to emit `ArrowFunction` for arrow
+    /// bindings, `Const` for object/array/primitive bindings, etc.
+    fn lexical_kind_for(&self, _node: &tree_sitter::Node, _src: &str) -> LexicalValueKind {
+        LexicalValueKind::Function
+    }
+
+    /// Extract cross-symbol references from a declaration node.
+    ///
+    /// Default: empty `Vec`. Concrete parsers override this to emit
+    /// `Reference { kind: Import | Export, ... }` per relevant node.
+    fn extract_references(&self, _node: &tree_sitter::Node, _src: &str) -> Vec<Reference> {
+        Vec::new()
     }
 }
 
