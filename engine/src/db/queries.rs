@@ -42,7 +42,20 @@ impl DbPool {
     /// is called on DbPool (not from within schema module itself).
     pub fn init_schema(&self) -> SqliteResult<()> {
         use crate::db::schema as schema_mod;
-        self.with_connection(schema_mod::init_schema)
+        self.with_connection(|conn| {
+            schema_mod::init_schema(conn)?;
+            // v7: outline_items table (not in schema_mod to avoid migration duplication)
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS outline_items (
+                    file_id TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                    outline_json TEXT NOT NULL,
+                    generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_outline_items_generated_at
+                    ON outline_items(generated_at);",
+            )?;
+            Ok(())
+        })
     }
 }
 
@@ -60,11 +73,22 @@ impl<'pool> ProjectRepository<'pool> {
 
     pub fn save_scan_result(&self, result: &ScanResult) -> SqliteResult<()> {
         self.pool.with_connection(|conn| {
+            // UPSERT project metadata (no CASCADE): update without deleting row.
             conn.execute(
-                "INSERT OR REPLACE INTO projects
+                "INSERT INTO projects
                  (id, name, root_path, files_count, symbols_count, imports_count,
                   scan_duration_ms, status, error, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))
+                 ON CONFLICT(id) DO UPDATE SET
+                  name = excluded.name,
+                  root_path = excluded.root_path,
+                  files_count = excluded.files_count,
+                  symbols_count = excluded.symbols_count,
+                  imports_count = excluded.imports_count,
+                  scan_duration_ms = excluded.scan_duration_ms,
+                  status = excluded.status,
+                  error = excluded.error,
+                  updated_at = datetime('now')",
                 params![
                     result.project_id,
                     result.project_name,
@@ -92,10 +116,18 @@ impl<'pool> ProjectRepository<'pool> {
         project_id: &str,
         file: &FileInfo,
     ) -> SqliteResult<()> {
+        // UPSERT file metadata without deleting the existing row. `INSERT OR REPLACE`
+        // deletes first, which cascades to symbols/imports/outline_items.
         conn.execute(
-            "INSERT OR REPLACE INTO files
+            "INSERT INTO files
              (id, project_id, path, name, extension, lines)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+              project_id = excluded.project_id,
+              path = excluded.path,
+              name = excluded.name,
+              extension = excluded.extension,
+              lines = excluded.lines",
             params![
                 file.id,
                 project_id,
@@ -1287,6 +1319,190 @@ mod tests {
 
         let files = repo.get_files("proj-1").unwrap();
         assert_eq!(files.len(), 2);
+    }
+
+    /// Regression: second save_scan_result must not delete previously persisted
+    /// imports or outline_items via INSERT OR REPLACE cascade.
+    #[test]
+    fn save_scan_result_idempotent_no_import_outline_cascade() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        // Phase 1: save project + file
+        let phase1 = ScanResult {
+            project_id: "proj-regr".into(),
+            project_name: "Regression".into(),
+            root_path: "/tmp/regr".into(),
+            files_count: 1,
+            symbols_count: 0,
+            imports_count: 0,
+            files: vec![FileInfo {
+                id: "file-regr-1".into(),
+                path: "src/main.ts".into(),
+                name: "main.ts".into(),
+                extension: "ts".into(),
+                symbols: vec![],
+                lines: 5,
+            }],
+            scan_duration_ms: 100,
+            status: ScanStatus::Scanning,
+            error: None,
+        };
+        repo.save_scan_result(&phase1).unwrap();
+
+        // Verify file persisted
+        let files_after_phase1 = repo.get_files("proj-regr").unwrap();
+        assert_eq!(files_after_phase1.len(), 1, "Setup: file should be saved");
+
+        // Simulate Phase 2 of scan_project: persist import and outline
+        // These are separate repo calls, same as in real scan_project
+        let import = crate::models::ImportInfo {
+            id: "imp-regr-1".into(),
+            source_file_id: "file-regr-1".into(),
+            target_file_id: None,
+            target_module: Some("./utils".into()),
+            imports: vec!["helper".into()],
+            is_default: false,
+            is_type: false,
+        };
+        repo.save_import(&import).unwrap();
+
+        let outline = vec![crate::models::OutlineItem {
+            id: "outline:file-regr-1:class:1:5:Main".into(),
+            file_id: "file-regr-1".into(),
+            name: "Main".into(),
+            kind: crate::models::OutlineItemKind::Class,
+            line_start: 1,
+            line_end: 5,
+            column_start: None,
+            column_end: None,
+            children: vec![],
+        }];
+        repo.save_outline_items("file-regr-1", &outline).unwrap();
+
+        // Verify both persisted before Phase 2 save
+        let imports_before = repo.get_imports("proj-regr").unwrap();
+        assert_eq!(imports_before.len(), 1, "Setup: import must be saved");
+        let outline_before = repo.get_outline_items("file-regr-1").unwrap();
+        assert_eq!(outline_before.len(), 1, "Setup: outline must be saved");
+
+        // Phase 2: re-save the project (simulates second save_scan_result in scan_project)
+        // Critical: must NOT delete the import or outline rows.
+        let phase2 = ScanResult {
+            project_id: "proj-regr".into(),
+            project_name: "Regression".into(),
+            root_path: "/tmp/regr".into(),
+            files_count: 1,
+            symbols_count: 0,
+            imports_count: 1,
+            files: vec![FileInfo {
+                id: "file-regr-1".into(),
+                path: "src/main.ts".into(),
+                name: "main.ts".into(),
+                extension: "ts".into(),
+                symbols: vec![],
+                lines: 5,
+            }],
+            scan_duration_ms: 250,
+            status: ScanStatus::Ready,
+            error: None,
+        };
+        repo.save_scan_result(&phase2).unwrap();
+
+        // Core assertions: import and outline survived the second save
+        let imports_after = repo.get_imports("proj-regr").unwrap();
+        assert_eq!(
+            imports_after.len(),
+            1,
+            "Import should survive second save_scan_result"
+        );
+        assert_eq!(imports_after[0].id, "imp-regr-1");
+
+        let outline_after = repo.get_outline_items("file-regr-1").unwrap();
+        assert_eq!(
+            outline_after.len(),
+            1,
+            "Outline should survive second save_scan_result"
+        );
+        assert_eq!(outline_after[0].name, "Main");
+    }
+
+    #[test]
+    fn save_scan_result_idempotent_symbols_preserved() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        // First save: project + file with one symbol
+        let sym = SymbolInfo {
+            id: "sym-regr-1".into(),
+            name: "MyFunction".into(),
+            kind: SymbolKind::Function,
+            file_id: "file-regr-sym".into(),
+            line_start: 1,
+            line_end: 20,
+            exports: true,
+        };
+        let phase1 = ScanResult {
+            project_id: "proj-regr-2".into(),
+            project_name: "Regression2".into(),
+            root_path: "/tmp/regr2".into(),
+            files_count: 1,
+            symbols_count: 1,
+            imports_count: 0,
+            files: vec![FileInfo {
+                id: "file-regr-sym".into(),
+                path: "src/main.ts".into(),
+                name: "main.ts".into(),
+                extension: "ts".into(),
+                symbols: vec![sym],
+                lines: 20,
+            }],
+            scan_duration_ms: 100,
+            status: ScanStatus::Scanning,
+            error: None,
+        };
+        repo.save_scan_result(&phase1).unwrap();
+
+        // Verify symbol present after first save
+        let files1 = repo.get_files("proj-regr-2").unwrap();
+        assert_eq!(files1.len(), 1);
+        assert_eq!(files1[0].symbols.len(), 1);
+
+        // Second save: same project, empty symbols array
+        // This simulates the second save_scan_result call in scan_project where
+        // Phase 1 files are passed again but the in-memory FileInfo has empty symbols.
+        let phase2 = ScanResult {
+            project_id: "proj-regr-2".into(),
+            project_name: "Regression2".into(),
+            root_path: "/tmp/regr2".into(),
+            files_count: 1,
+            symbols_count: 1,
+            imports_count: 0,
+            files: vec![FileInfo {
+                id: "file-regr-sym".into(),
+                path: "src/main.ts".into(),
+                name: "main.ts".into(),
+                extension: "ts".into(),
+                symbols: vec![],
+                lines: 20,
+            }],
+            scan_duration_ms: 300,
+            status: ScanStatus::Ready,
+            error: None,
+        };
+        repo.save_scan_result(&phase2).unwrap();
+
+        // Symbol must survive via INSERT OR REPLACE on symbols table
+        let files2 = repo.get_files("proj-regr-2").unwrap();
+        assert_eq!(files2.len(), 1);
+        assert_eq!(
+            files2[0].symbols.len(),
+            1,
+            "Symbol should survive second save"
+        );
+        assert_eq!(files2[0].symbols[0].name, "MyFunction");
     }
 
     #[test]

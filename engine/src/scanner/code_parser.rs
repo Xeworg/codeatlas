@@ -65,40 +65,15 @@ impl CodeParser {
         let root = tree.root_node();
         let bytes = content.as_bytes();
 
-        // Walk tree and extract symbols
+        // Walk tree and extract symbols.
+        // Handle two patterns:
+        //   (a) direct declaration: function_declaration, class_declaration, …
+        //   (b) export wrapper: export_statement > declaration
         let mut cursor = root.walk();
         for node in root.children(&mut cursor) {
             let kind = node.kind();
 
-            let symbol_kind = match kind {
-                "class_declaration" => Some(SymbolKind::Class),
-                "function_declaration" => Some(SymbolKind::Function),
-                "method_definition" => Some(SymbolKind::Method),
-                "interface_declaration" => Some(SymbolKind::Interface),
-                "type_alias_declaration" => Some(SymbolKind::TypeAlias),
-                "enum_declaration" => Some(SymbolKind::Enum),
-                "lexical_declaration" => Some(SymbolKind::Const),
-                _ => None,
-            };
-
-            if let Some(sk) = symbol_kind {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    let name = name_node.utf8_text(bytes).unwrap_or("");
-                    let start = node.start_position();
-                    let end = node.end_position();
-                    symbols.push(SymbolInfo {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        name: name.to_string(),
-                        kind: sk,
-                        file_id: file_path.to_string(),
-                        line_start: start.row as u32 + 1,
-                        line_end: end.row as u32 + 1,
-                        exports: true,
-                    });
-                }
-            }
-
-            // Extract imports
+            // ── Imports ──────────────────────────────────────────────────────
             if kind == "import_statement" {
                 let source_file_id = file_path.to_string();
                 let target_module = node
@@ -128,8 +103,82 @@ impl CodeParser {
                     is_default,
                     is_type,
                 });
+                continue;
+            }
+
+            // ── Symbols (direct or wrapped in export_statement) ────────────────
+            // Try direct declaration first.
+            let direct = Self::ts_symbol_kind(kind);
+
+            // If it's an export_statement, unwrap to the first declaration child.
+            let declaration = if kind == "export_statement" {
+                node.children(&mut node.walk())
+                    .find(|n| !n.kind().starts_with("comment"))
+            } else {
+                None
+            };
+
+            let target_kind =
+                direct.or_else(|| declaration.and_then(|d| Self::ts_symbol_kind(d.kind())));
+
+            let symbol_node = if direct.is_some() {
+                Some(node)
+            } else {
+                declaration
+            };
+
+            if let (Some(sk), Some(sym_node)) = (target_kind, symbol_node) {
+                let name = Self::ts_declaration_name(&sym_node, bytes);
+                if let Some(n) = name {
+                    let start = sym_node.start_position();
+                    let end = sym_node.end_position();
+                    symbols.push(SymbolInfo {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        name: n.to_string(),
+                        kind: sk,
+                        file_id: file_path.to_string(),
+                        line_start: start.row as u32 + 1,
+                        line_end: end.row as u32 + 1,
+                        exports: true,
+                    });
+                }
             }
         }
+    }
+
+    /// Maps tree-sitter node kinds to SymbolKind for TypeScript declarations.
+    fn ts_symbol_kind(kind: &str) -> Option<SymbolKind> {
+        match kind {
+            "class_declaration" => Some(SymbolKind::Class),
+            "function_declaration" => Some(SymbolKind::Function),
+            "method_definition" => Some(SymbolKind::Method),
+            "interface_declaration" => Some(SymbolKind::Interface),
+            "type_alias_declaration" => Some(SymbolKind::TypeAlias),
+            "enum_declaration" => Some(SymbolKind::Enum),
+            "lexical_declaration" => Some(SymbolKind::Const),
+            _ => None,
+        }
+    }
+
+    /// Extract declaration name, handling nested names for lexical_declaration.
+    fn ts_declaration_name<'a>(
+        node: &'a tree_sitter::Node<'a>,
+        bytes: &'a [u8],
+    ) -> Option<&'a str> {
+        if let Some(n) = node.child_by_field_name("name") {
+            return n.utf8_text(bytes).ok();
+        }
+        if node.kind() == "lexical_declaration" {
+            let mut c = node.walk();
+            for child in node.children(&mut c) {
+                if child.kind() == "variable_declarator" {
+                    if let Some(n) = child.child_by_field_name("name") {
+                        return n.utf8_text(bytes).ok();
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn extract_rust_symbols(
