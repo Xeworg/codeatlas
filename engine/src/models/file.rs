@@ -83,6 +83,66 @@ impl OutlineItem {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// LexicalValueKind — classification of a lexical/binding declaration.
+// Language-neutral: every `LanguageParser` emits one of these variants per
+// top-level binding so the AI layer can distinguish `const`/`let` values,
+// arrow functions, and `function` declarations without grammar-specific logic.
+// ─────────────────────────────────────────────────────────────────────────────
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LexicalValueKind {
+    #[default]
+    Const,
+    ArrowFunction,
+    Function,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ReferenceKind — kinds of cross-symbol references the IR v1 exposes.
+// `Import` and `Export` are the v1 emission targets; `Call` and `TypeRef` are
+// stub variants kept in the enum so the AI layer can wire to the full shape
+// now without a schema churn when v2 adds resolution.
+// ─────────────────────────────────────────────────────────────────────────────
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceKind {
+    Import,
+    Export,
+    Call,
+    TypeRef,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Range — half-open byte range plus 1-based line/column for UI/IA displays.
+// All fields are required; legacy consumers that don't track column data must
+// pass `0` (which is also what tree-sitter returns for unknown columns).
+// ─────────────────────────────────────────────────────────────────────────────
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Range {
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub start_line: u32,
+    pub start_col: u32,
+    pub end_line: u32,
+    pub end_col: u32,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reference — a single cross-symbol edge observed during a single AST pass.
+// Carries `file_id` explicitly (per design decision #6) so the AI layer can
+// group references by source file without consulting the parent ParseResult.
+// ─────────────────────────────────────────────────────────────────────────────
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reference {
+    pub file_id: String,
+    pub kind: ReferenceKind,
+    pub target_name: String,
+    pub range: Range,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ParseResult — aggregated output from a single parse pass
 // ─────────────────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Default)]

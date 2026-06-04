@@ -14,6 +14,9 @@ pub mod rust;
 pub mod traits;
 pub mod typescript;
 
+#[cfg(test)]
+mod ir_tests;
+
 pub use crate::models::{OutlineItem, ParseResult};
 pub use registry::ParserRegistry;
 pub use traits::LanguageParser;
