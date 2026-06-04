@@ -59,7 +59,11 @@ fn range_serializes_camel_case() {
     assert!(json.contains("\"endByte\":42"), "got: {}", json);
     assert!(json.contains("\"startLine\":2"), "got: {}", json);
     assert!(json.contains("\"endCol\":8"), "got: {}", json);
-    assert!(!json.contains("start_byte"), "must not have snake_case: {}", json);
+    assert!(
+        !json.contains("start_byte"),
+        "must not have snake_case: {}",
+        json
+    );
 }
 
 #[test]

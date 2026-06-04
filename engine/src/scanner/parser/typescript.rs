@@ -11,20 +11,35 @@
 
 use super::traits::{make_outline_id, LanguageParser};
 use crate::models::{
-    ImportInfo, OutlineItem, OutlineItemKind, ParseResult, SymbolInfo, SymbolKind,
+    ImportInfo, LexicalValueKind, OutlineItem, OutlineItemKind, ParseResult, Range, Reference,
+    ReferenceKind, SymbolInfo, SymbolKind,
 };
 use tree_sitter::{Language, Parser};
-use tree_sitter_typescript::LANGUAGE_TYPESCRIPT;
+use tree_sitter_typescript::{LANGUAGE_TSX, LANGUAGE_TYPESCRIPT};
 
 /// TypeScript/TSX language parser.
 pub struct TypeScriptParser {
+    /// Non-JSX grammar (used for `.ts`/`.js`).
     language: Language,
+    /// JSX grammar (used for `.tsx`/`.jsx`).
+    tsx_language: Language,
 }
 
 impl TypeScriptParser {
     pub fn new() -> Self {
         Self {
             language: LANGUAGE_TYPESCRIPT.into(),
+            tsx_language: LANGUAGE_TSX.into(),
+        }
+    }
+
+    /// Pick the right grammar for the file extension. PR-B requires the TSX
+    /// grammar for files containing JSX (e.g. `react_const_arrow.tsx`).
+    fn language_for_path(&self, path: &str) -> &Language {
+        if path.ends_with(".tsx") || path.ends_with(".jsx") {
+            &self.tsx_language
+        } else {
+            &self.language
         }
     }
 
@@ -200,6 +215,127 @@ impl TypeScriptParser {
 
         children
     }
+
+    /// Walk a `lexical_declaration` node and return true if any of its
+    /// `variable_declarator` children has an `arrow_function` as its direct
+    /// value (e.g. `const x = () => {}`).
+    fn lexical_decl_has_arrow(node: &tree_sitter::Node) -> bool {
+        let mut c = node.walk();
+        for child in node.children(&mut c) {
+            if child.kind() == "variable_declarator" {
+                let mut vc = child.walk();
+                for vc_child in child.children(&mut vc) {
+                    if vc_child.kind() == "arrow_function" {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Walk a class body and return true if any `public_field_definition` /
+    /// `field_definition` child has an `arrow_function` value.
+    fn class_body_has_arrow_field(class_node: &tree_sitter::Node) -> bool {
+        let mut c = class_node.walk();
+        for child in class_node.children(&mut c) {
+            if child.kind() == "class_body" {
+                let mut bc = child.walk();
+                for body_child in child.children(&mut bc) {
+                    if body_child.kind() == "public_field_definition"
+                        || body_child.kind() == "field_definition"
+                    {
+                        let mut fc = body_child.walk();
+                        for fc_child in body_child.children(&mut fc) {
+                            if fc_child.kind() == "arrow_function" {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Append a `Reference` to `refs` using the given node's range. The
+    /// `file_id` is left empty here and filled in by `parse_all`.
+    fn push_spec_reference(
+        refs: &mut Vec<Reference>,
+        node: tree_sitter::Node,
+        target_name: String,
+        kind: ReferenceKind,
+    ) {
+        let start = node.start_position();
+        let end = node.end_position();
+        refs.push(Reference {
+            file_id: String::new(), // filled by parse_all
+            kind,
+            target_name,
+            range: Range {
+                start_byte: node.start_byte(),
+                end_byte: node.end_byte(),
+                start_line: start.row as u32 + 1,
+                start_col: start.column as u32,
+                end_line: end.row as u32 + 1,
+                end_col: end.column as u32,
+            },
+        });
+    }
+
+    /// Collect `SymbolInfo { ArrowFunction }` for every arrow-valued class
+    /// field within `class_node`. PR-B contract: the field symbol must be
+    /// distinct from the class symbol so the AI layer can reason about both.
+    fn collect_arrow_field_symbols(
+        class_node: &tree_sitter::Node,
+        bytes: &[u8],
+        file_id: &str,
+    ) -> Vec<SymbolInfo> {
+        let mut symbols = Vec::new();
+        let mut c = class_node.walk();
+        for child in class_node.children(&mut c) {
+            if child.kind() != "class_body" {
+                continue;
+            }
+            let body_children: Vec<tree_sitter::Node> = {
+                let mut bc = child.walk();
+                child.children(&mut bc).collect()
+            };
+            for body_child in body_children {
+                let kind = body_child.kind();
+                if kind != "public_field_definition" && kind != "field_definition" {
+                    continue;
+                }
+                let has_arrow = {
+                    let mut fc = body_child.walk();
+                    let x = body_child
+                        .children(&mut fc)
+                        .any(|cc| cc.kind() == "arrow_function");
+                    x
+                };
+                if !has_arrow {
+                    continue;
+                }
+                let name_node = match body_child.child_by_field_name("name") {
+                    Some(n) => n,
+                    None => continue,
+                };
+                let name = name_node.utf8_text(bytes).unwrap_or("");
+                let start = body_child.start_position();
+                let end = body_child.end_position();
+                symbols.push(SymbolInfo {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: name.to_string(),
+                    kind: SymbolKind::ArrowFunction,
+                    file_id: file_id.to_string(),
+                    line_start: start.row as u32 + 1,
+                    line_end: end.row as u32 + 1,
+                    exports: true,
+                });
+            }
+        }
+        symbols
+    }
 }
 
 impl LanguageParser for TypeScriptParser {
@@ -211,9 +347,159 @@ impl LanguageParser for TypeScriptParser {
         &["ts", "tsx", "js", "jsx"]
     }
 
-    fn parse_all(&self, source: &str, _path: &str, file_id: &str) -> ParseResult {
+    fn lexical_kind_for(&self, node: &tree_sitter::Node, _src: &str) -> LexicalValueKind {
+        match node.kind() {
+            "function_declaration" => LexicalValueKind::Function,
+            "lexical_declaration" => {
+                if Self::lexical_decl_has_arrow(node) {
+                    LexicalValueKind::ArrowFunction
+                } else {
+                    LexicalValueKind::Const
+                }
+            }
+            "class_declaration" => {
+                if Self::class_body_has_arrow_field(node) {
+                    LexicalValueKind::ArrowFunction
+                } else {
+                    LexicalValueKind::Const
+                }
+            }
+            "export_statement" => {
+                // Unwrap: `export const X = () => {}` is a `lexical_declaration`
+                // inside the export_statement; classify the inner declaration.
+                if let Some(inner) = Self::find_declaration_child(node) {
+                    self.lexical_kind_for(&inner, _src)
+                } else {
+                    LexicalValueKind::Const
+                }
+            }
+            _ => LexicalValueKind::Const,
+        }
+    }
+
+    fn extract_references(&self, node: &tree_sitter::Node, src: &str) -> Vec<Reference> {
+        let mut refs: Vec<Reference> = Vec::new();
+        let bytes = src.as_bytes();
+        match node.kind() {
+            "import_statement" => {
+                // Walk the import_clause to find each import specifier.
+                // TypeScript tree-sitter nests specifiers under:
+                //   import_clause
+                //     ├─ default_import        -> identifier  (`import React`)
+                //     ├─ named_imports         -> {foo, bar}  (`import {foo, bar}`)
+                //     └─ namespace_import      -> * as ns     (`import * as ns`)
+                // Each leaf becomes a Reference with kind=Import.
+                let clause: Option<tree_sitter::Node> = {
+                    let mut c = node.walk();
+                    let x = node.children(&mut c).find(|n| n.kind() == "import_clause");
+                    x
+                };
+                if let Some(clause) = clause {
+                    let leaves: Vec<tree_sitter::Node> = {
+                        let mut cc = clause.walk();
+                        let x = clause.children(&mut cc).collect::<Vec<_>>();
+                        x
+                    };
+                    for leaf in leaves {
+                        match leaf.kind() {
+                            "default_import" | "identifier" => {
+                                // `import React from 'react'` — React is the
+                                // direct child identifier of default_import.
+                                let name_node: Option<tree_sitter::Node> = if leaf.kind()
+                                    == "default_import"
+                                {
+                                    let mut dc = leaf.walk();
+                                    let x =
+                                        leaf.children(&mut dc).find(|n| n.kind() == "identifier");
+                                    x
+                                } else {
+                                    Some(leaf)
+                                };
+                                if let Some(nn) = name_node {
+                                    if let Ok(name) = nn.utf8_text(bytes) {
+                                        Self::push_spec_reference(
+                                            &mut refs,
+                                            leaf,
+                                            name.to_string(),
+                                            ReferenceKind::Import,
+                                        );
+                                    }
+                                }
+                            }
+                            "named_imports" => {
+                                let mut nc = leaf.walk();
+                                for spec in leaf.children(&mut nc) {
+                                    if spec.kind() != "import_specifier" {
+                                        continue;
+                                    }
+                                    // `import { foo as bar }` -> use alias if present
+                                    let name_node = spec
+                                        .child_by_field_name("alias")
+                                        .or_else(|| spec.child_by_field_name("name"));
+                                    if let Some(nn) = name_node {
+                                        if let Ok(name) = nn.utf8_text(bytes) {
+                                            Self::push_spec_reference(
+                                                &mut refs,
+                                                spec,
+                                                name.to_string(),
+                                                ReferenceKind::Import,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            "namespace_import" => {
+                                // `import * as ns from 'x'` -> "ns" is
+                                // child identifier of namespace_import.
+                                let mut nc = leaf.walk();
+                                let id = leaf.children(&mut nc).find(|n| n.kind() == "identifier");
+                                if let Some(nn) = id {
+                                    if let Ok(name) = nn.utf8_text(bytes) {
+                                        Self::push_spec_reference(
+                                            &mut refs,
+                                            leaf,
+                                            name.to_string(),
+                                            ReferenceKind::Import,
+                                        );
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            "export_statement" => {
+                // Emit one Reference for the exported declaration's name.
+                if let Some(decl) = Self::find_declaration_child(node) {
+                    if let Some(name) = Self::ts_declaration_name(&decl, bytes) {
+                        let start = decl.start_position();
+                        let end = decl.end_position();
+                        refs.push(Reference {
+                            file_id: String::new(), // filled by parse_all
+                            kind: ReferenceKind::Export,
+                            target_name: name.to_string(),
+                            range: Range {
+                                start_byte: decl.start_byte(),
+                                end_byte: decl.end_byte(),
+                                start_line: start.row as u32 + 1,
+                                start_col: start.column as u32,
+                                end_line: end.row as u32 + 1,
+                                end_col: end.column as u32,
+                            },
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+        refs
+    }
+
+    fn parse_all(&self, source: &str, path: &str, file_id: &str) -> ParseResult {
         let mut parser = Parser::new();
-        if parser.set_language(&self.language).is_err() {
+        let language = self.language_for_path(path);
+        if parser.set_language(language).is_err() {
             return ParseResult::default();
         }
 
@@ -260,6 +546,12 @@ impl LanguageParser for TypeScriptParser {
                     is_default,
                     is_type,
                 });
+                // PR-B: emit Import references inline (single pass).
+                let mut refs = self.extract_references(&node, source);
+                for r in &mut refs {
+                    r.file_id = file_id.to_string();
+                }
+                result.references.extend(refs);
                 continue;
             }
 
@@ -330,6 +622,48 @@ impl LanguageParser for TypeScriptParser {
                     });
                 }
             }
+
+            // ── PR-B: lexical kind (priority: ArrowFunction > Function > Const)
+            let kind_for_node = self.lexical_kind_for(&node, source);
+            match (result.lexical_kind, kind_for_node) {
+                (_, LexicalValueKind::ArrowFunction) => {
+                    result.lexical_kind = LexicalValueKind::ArrowFunction
+                }
+                (LexicalValueKind::Const, LexicalValueKind::Function) => {
+                    result.lexical_kind = LexicalValueKind::Function
+                }
+                _ => {}
+            }
+
+            // ── PR-B: class field arrow symbol extraction ────────────────────
+            // Cover both bare `class_declaration` and `export_statement`
+            // wrapping a class so exported classes also emit ArrowFunction
+            // sub-symbols for arrow-valued fields.
+            if kind == "class_declaration" {
+                let field_symbols = Self::collect_arrow_field_symbols(&node, bytes, file_id);
+                for sym in field_symbols {
+                    result.symbols.push(sym);
+                }
+            } else if kind == "export_statement" {
+                if let Some(inner) = Self::find_declaration_child(&node) {
+                    if inner.kind() == "class_declaration" {
+                        let field_symbols =
+                            Self::collect_arrow_field_symbols(&inner, bytes, file_id);
+                        for sym in field_symbols {
+                            result.symbols.push(sym);
+                        }
+                    }
+                }
+            }
+
+            // ── PR-B: import/export reference extraction (single pass) ───────
+            if kind == "import_statement" || kind == "export_statement" {
+                let mut refs = self.extract_references(&node, source);
+                for r in &mut refs {
+                    r.file_id = file_id.to_string();
+                }
+                result.references.extend(refs);
+            }
         }
 
         result
@@ -345,6 +679,7 @@ impl Default for TypeScriptParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{LexicalValueKind, ReferenceKind};
 
     fn ts_result(code: &str, extension: &str) -> ParseResult {
         let parser = TypeScriptParser::new();
@@ -666,5 +1001,267 @@ import type { User } from "./types";"#;
         );
         // Outline may or may not include const — depends on mapping
         // (we don't assert on outline emptiness here since Const kind IS mapped)
+    }
+
+    // ── PR-B: lexical kind detection (RED tests) ────────────────────────────
+
+    fn fixture(name: &str) -> String {
+        use std::fs;
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("typescript")
+            .join(name);
+        fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read fixture {}: {}", path.display(), e))
+    }
+
+    #[test]
+    fn lexical_kind_arrow_field_is_arrow_function() {
+        // B.1 RED: a class field with an arrow function value should yield
+        // LexicalValueKind::ArrowFunction for the file (top-level binding).
+        let code = fixture("arrow_field.ts");
+        let result = ts_result(&code, "ts");
+        assert_eq!(
+            result.lexical_kind,
+            LexicalValueKind::ArrowFunction,
+            "expected ArrowFunction for arrow field, got {:?}",
+            result.lexical_kind
+        );
+    }
+
+    #[test]
+    fn lexical_kind_object_literal_is_const() {
+        // B.1 RED baseline: object literal must be Const, even when the object
+        // contains a method-style arrow property.
+        let code = fixture("object_literal.ts");
+        let result = ts_result(&code, "ts");
+        assert_eq!(
+            result.lexical_kind,
+            LexicalValueKind::Const,
+            "expected Const for object literal, got {:?}",
+            result.lexical_kind
+        );
+    }
+
+    #[test]
+    fn lexical_kind_react_const_arrow_is_arrow_function() {
+        // B.1 RED: a `const Component = (...) => <div/>` lexical_declaration
+        // with a JSX arrow body should be classified as ArrowFunction.
+        let code = fixture("react_const_arrow.tsx");
+        let result = ts_result(&code, "tsx");
+        assert_eq!(
+            result.lexical_kind,
+            LexicalValueKind::ArrowFunction,
+            "expected ArrowFunction for react const arrow, got {:?}",
+            result.lexical_kind
+        );
+    }
+
+    #[test]
+    fn lexical_kind_function_declaration_is_function() {
+        // B.1 RED: a `function foo() {}` declaration must yield Function,
+        // not the default Const.
+        let code = "function foo() {}\n";
+        let result = ts_result(code, "ts");
+        assert_eq!(
+            result.lexical_kind,
+            LexicalValueKind::Function,
+            "expected Function for function_declaration, got {:?}",
+            result.lexical_kind
+        );
+    }
+
+    #[test]
+    fn lexical_kind_arrow_class_method_field_emits_arrow_function_symbol() {
+        // B.2 contract: the `handler` field inside a class with an arrow
+        // initializer must produce a `SymbolKind::ArrowFunction` symbol.
+        // This pins SymbolKind differentiation separately from LexicalValueKind.
+        let code = fixture("arrow_field.ts");
+        let result = ts_result(&code, "ts");
+        let handler = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "handler")
+            .expect("expected 'handler' symbol for class field arrow");
+        assert_eq!(
+            handler.kind,
+            SymbolKind::ArrowFunction,
+            "expected ArrowFunction symbol kind, got {:?}",
+            handler.kind
+        );
+    }
+
+    #[test]
+    fn exported_class_with_arrow_field_emits_arrow_function_sub_symbol() {
+        // Reviewer-noted minor gap: an `export class Svc { handler = (req) => ... }`
+        // must also emit a `SymbolKind::ArrowFunction` sub-symbol for the
+        // arrow-valued field, not just set the file's `lexical_kind`.
+        let code = fixture("exported_class_arrow.ts");
+        let result = ts_result(&code, "ts");
+        let handler = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "handler")
+            .expect("expected 'handler' symbol for exported class arrow field");
+        assert_eq!(
+            handler.kind,
+            SymbolKind::ArrowFunction,
+            "expected ArrowFunction symbol kind for exported class field, got {:?}",
+            handler.kind
+        );
+        // Sanity: the class itself is still a Class symbol.
+        let svc = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Svc")
+            .expect("expected 'Svc' class symbol");
+        assert_eq!(
+            svc.kind,
+            SymbolKind::Class,
+            "expected Class symbol kind for exported class, got {:?}",
+            svc.kind
+        );
+    }
+
+    // ── PR-B: import/export Reference emission (RED tests) ───────────────────
+
+    #[test]
+    fn reference_import_emits_target_name() {
+        // B.3 RED: `import { foo } from './bar'` must emit a Reference
+        // with kind=Import and target_name="foo".
+        let code = r#"import { foo } from './bar';"#;
+        let result = ts_result(code, "ts");
+        assert!(
+            result
+                .references
+                .iter()
+                .any(|r| r.kind == ReferenceKind::Import && r.target_name == "foo"),
+            "expected import reference for 'foo', got: {:#?}",
+            result.references
+        );
+    }
+
+    #[test]
+    fn reference_import_default_emits_target_name() {
+        // B.3 RED: `import React from 'react'` must emit a Reference
+        // with kind=Import and target_name="React".
+        let code = r#"import React from 'react';"#;
+        let result = ts_result(code, "ts");
+        assert!(
+            result
+                .references
+                .iter()
+                .any(|r| r.kind == ReferenceKind::Import && r.target_name == "React"),
+            "expected import reference for 'React', got: {:#?}",
+            result.references
+        );
+    }
+
+    #[test]
+    fn reference_export_emits_target_name() {
+        // B.3 RED: `export function greet() {}` must emit a Reference
+        // with kind=Export and target_name="greet".
+        let code = "export function greet() {}\n";
+        let result = ts_result(code, "ts");
+        assert!(
+            result
+                .references
+                .iter()
+                .any(|r| r.kind == ReferenceKind::Export && r.target_name == "greet"),
+            "expected export reference for 'greet', got: {:#?}",
+            result.references
+        );
+    }
+
+    #[test]
+    fn reference_export_arrow_emits_target_name() {
+        // B.3 RED: `export const Card = () => ...` must emit a Reference
+        // with kind=Export and target_name="Card".
+        let code = fixture("react_const_arrow.tsx");
+        let result = ts_result(&code, "tsx");
+        assert!(
+            result
+                .references
+                .iter()
+                .any(|r| r.kind == ReferenceKind::Export && r.target_name == "Card"),
+            "expected export reference for 'Card', got: {:#?}",
+            result.references
+        );
+    }
+
+    #[test]
+    fn reference_file_id_is_populated() {
+        // B.3 contract: file_id MUST be set in parse_all (the trait hook
+        // returns empty; parse_all fills it in).
+        let code = r#"import { foo } from './bar';"#;
+        let result = ts_result(code, "ts");
+        for r in &result.references {
+            assert!(
+                !r.file_id.is_empty(),
+                "reference file_id must be set, got empty for {:?}",
+                r
+            );
+        }
+    }
+
+    #[test]
+    fn single_pass_populates_all_ir_categories() {
+        // B.4: a single parse_all call must populate symbols, outline,
+        // lexical_kind, and references. If any category is missing the
+        // parser has done a second AST pass (or skipped a category).
+        let code = r#"
+import { foo } from './bar';
+export const Card = ({title}) => <div>{title}</div>;
+export function greet() {}
+"#;
+        let result = ts_result(code, "tsx");
+        assert!(
+            !result.imports.is_empty(),
+            "imports must be populated: {:#?}",
+            result.imports
+        );
+        assert!(
+            !result.symbols.is_empty(),
+            "symbols must be populated: {:#?}",
+            result.symbols
+        );
+        assert!(
+            !result.outline.is_empty(),
+            "outline must be populated: {:#?}",
+            result.outline
+        );
+        assert!(
+            !result.references.is_empty(),
+            "references must be populated: {:#?}",
+            result.references
+        );
+        assert_eq!(
+            result.lexical_kind,
+            LexicalValueKind::ArrowFunction,
+            "lexical_kind must be ArrowFunction for const Card arrow"
+        );
+        // Spot-check that import / export reference targets are present.
+        assert!(
+            result
+                .references
+                .iter()
+                .any(|r| r.kind == ReferenceKind::Import && r.target_name == "foo"),
+            "expected import reference for 'foo'"
+        );
+        assert!(
+            result
+                .references
+                .iter()
+                .any(|r| r.kind == ReferenceKind::Export && r.target_name == "Card"),
+            "expected export reference for 'Card'"
+        );
+        assert!(
+            result
+                .references
+                .iter()
+                .any(|r| r.kind == ReferenceKind::Export && r.target_name == "greet"),
+            "expected export reference for 'greet'"
+        );
     }
 }

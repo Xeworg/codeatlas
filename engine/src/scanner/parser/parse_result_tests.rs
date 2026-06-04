@@ -46,7 +46,10 @@ fn parse_result_exposes_lexical_kind_and_references() {
 #[test]
 fn parse_result_default_has_empty_references_and_const_lexical_kind() {
     let result = ParseResult::default();
-    assert!(result.references.is_empty(), "references default must be empty");
+    assert!(
+        result.references.is_empty(),
+        "references default must be empty"
+    );
     assert_eq!(
         result.lexical_kind,
         LexicalValueKind::Const,
@@ -101,8 +104,7 @@ fn parse_result_legacy_json_without_ir_fields_still_decodes() {
     // Legacy JSON shape (pre-IR): no `lexicalKind` or `references` field.
     // `#[serde(default)]` MUST ensure it deserializes cleanly.
     let legacy = r#"{"symbols":[],"imports":[],"outline":[]}"#;
-    let parsed: ParseResult =
-        serde_json::from_str(legacy).expect("legacy JSON must deserialize");
+    let parsed: ParseResult = serde_json::from_str(legacy).expect("legacy JSON must deserialize");
     assert!(parsed.symbols.is_empty());
     assert!(parsed.imports.is_empty());
     assert!(parsed.outline.is_empty());

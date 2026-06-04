@@ -84,11 +84,8 @@ mod tests {
         // We can't easily construct a Node here, so we just compile-check.
         let _: fn(&PythonParser, &tree_sitter::Node, &str) -> LexicalValueKind =
             |p, n, s| p.lexical_kind_for(n, s);
-        let _: fn(
-            &PythonParser,
-            &tree_sitter::Node,
-            &str,
-        ) -> Vec<crate::models::Reference> = |p, n, s| p.extract_references(n, s);
+        let _: fn(&PythonParser, &tree_sitter::Node, &str) -> Vec<crate::models::Reference> =
+            |p, n, s| p.extract_references(n, s);
         // Ensure the unused binding doesn't get optimized out.
         let _ = node_placeholder;
     }
