@@ -19,6 +19,7 @@
 
 use crate::models::{FileInfo, ImportInfo, OutlineItem};
 use crate::scanner::parser::{ParseResult, ParserRegistry};
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
@@ -31,6 +32,9 @@ pub struct ScanFilesOutput {
     pub file_infos: Vec<FileInfo>,
     /// All import records across all files (used to populate import edges).
     pub all_imports: Vec<ImportInfo>,
+    /// Cached outlines keyed by relative file path, derived from the same
+    /// `ParseResult` as symbols and imports — no second parse required.
+    pub outlines: HashMap<String, Vec<OutlineItem>>,
     /// Time spent in the registry parse calls (ms).
     pub parse_ms: u64,
     /// How many times the registry was called (one per file + any gracefully
@@ -63,6 +67,7 @@ pub fn scan_files(
     let parse_start = Instant::now();
     let mut file_infos: Vec<FileInfo> = Vec::with_capacity(files.len());
     let mut all_imports: Vec<ImportInfo> = Vec::new();
+    let mut outlines: HashMap<String, Vec<OutlineItem>> = HashMap::new();
     let mut registry_call_count: usize = 0;
     let mut files_failed: usize = 0;
     let mut files_read: usize = 0;
@@ -79,8 +84,8 @@ pub fn scan_files(
             }
         };
 
-        // Pass relative_path as file_id so ImportInfo.source_file_id matches path_to_id keys.
-        let result: ParseResult = registry.parse_file(&file.path, &source, &file.extension, &file.relative_path);
+        let result: ParseResult =
+            registry.parse_file(&file.path, &source, &file.extension, &file.relative_path);
         registry_call_count += 1;
 
         let file_info = FileInfo {
@@ -93,6 +98,7 @@ pub fn scan_files(
         };
 
         all_imports.extend(result.imports);
+        outlines.insert(file.relative_path.clone(), result.outline);
         file_infos.push(file_info);
     }
 
@@ -100,6 +106,7 @@ pub fn scan_files(
     ScanFilesOutput {
         file_infos,
         all_imports,
+        outlines,
         parse_ms,
         registry_call_count,
         files_failed,

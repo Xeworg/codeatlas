@@ -53,11 +53,7 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         scan_files(&registry, &discovered, std::path::Path::new(&path));
     let parse_ms = scan_output.parse_ms;
     let total_ms = discover_ms + parse_ms;
-    let symbols_count: usize = scan_output
-        .file_infos
-        .iter()
-        .map(|f| f.symbols.len())
-        .sum();
+    let symbols_count: usize = scan_output.file_infos.iter().map(|f| f.symbols.len()).sum();
 
     // Build path → UUID lookup for resolving imports
     let path_to_id: std::collections::HashMap<String, String> = scan_output
@@ -103,7 +99,6 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
 
     // file_infos carried from scan_files output
     let file_infos = scan_output.file_infos;
-
 
     let repo = ProjectRepository::new(&state.db);
 
@@ -179,13 +174,11 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         }
     }
 
-    // Phase 3: Persist outline items using outline_for_file (single dispatch per file).
-    // Phase 1+2 are already single-dispatch via scan_files; Phase 3 also uses
-    // outline_for_file (which calls registry exactly once) so the full scan
-    // achieves single-parse-per-file across all 3 phases.
+    // Phase 3: Persist outline items using the cached outlines from scan_files.
+    // scan_files already called registry once per file (single parse); the outlines
+    // are cached in scan_output.outlines keyed by relative_path. No second parse.
     let mut outline_skipped = 0usize;
     let mut outline_errors = 0usize;
-    let phase3_registry = ParserRegistry::new();
     for file in &discovered {
         let file_id = match path_to_id.get(&file.relative_path) {
             Some(id) => id,
@@ -195,24 +188,16 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
             }
         };
 
-        let content = match std::fs::read_to_string(&file.path) {
-            Ok(c) => c,
-            Err(_) => {
-                outline_errors += 1;
+        let outline = match scan_output.outlines.get(&file.relative_path) {
+            Some(o) => o,
+            None => {
+                outline_skipped += 1;
                 continue;
             }
         };
 
-        let outline = outline_for_file(
-            &phase3_registry,
-            file_id,
-            &file.path,
-            &content,
-            &file.extension,
-        );
-
         if !outline.is_empty() {
-            if let Err(e) = repo.save_outline_items(file_id, &outline) {
+            if let Err(e) = repo.save_outline_items(file_id, outline) {
                 tracing::debug!("Failed to persist outline for {}: {}", file_id, e);
                 outline_errors += 1;
             }

@@ -3,7 +3,7 @@
 //! These tests fail initially and turn green once `engine/src/commands.rs`
 //! implements the contracts:
 //! - C.1 RED: `scan_files` must call `ParserRegistry::parse_file` exactly once
-//!            per discovered file (contract: no re-parsing per file).
+//!   per discovered file (contract: no re-parsing per file).
 //! - C.1 RED: `outline_for_file` must call registry exactly once.
 
 /// C.1 RED — module existence and type-level contracts.
@@ -15,6 +15,12 @@ mod module_exists_tests {
     fn commands_module_types_exist() {
         let _: Option<crate::commands::ScanFilesOutput> = None;
         let _: Option<&dyn crate::commands::ParseFile> = None;
+        // ScanFilesOutput now carries outlines from the same parse pass.
+        let output = crate::commands::ScanFilesOutput::default();
+        assert!(
+            output.outlines.is_empty(),
+            "outlines must be a field on ScanFilesOutput"
+        );
     }
 }
 
@@ -106,6 +112,12 @@ mod single_dispatch_tests {
             output.file_infos.len(),
             3,
             "scan_files must return one FileInfo per discovered file"
+        );
+        // Outlines must be cached from the same ParseResult — no second parse needed.
+        assert_eq!(
+            output.outlines.len(),
+            3,
+            "scan_files must cache outlines for all 3 files (no second parse)"
         );
 
         let _ = std::fs::remove_dir_all(&root);

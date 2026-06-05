@@ -7,9 +7,9 @@
 //! - `CodeParser::parse_file` (deprecated) for any remaining legacy call sites.
 //!   Converts a `ParseResult` to the legacy `(symbols, imports)` tuple.
 
+use super::parser::ParserRegistry;
 use crate::models::{ImportInfo, ParseResult, SymbolInfo, SymbolKind};
 use tree_sitter::Tree;
-use super::parser::ParserRegistry;
 
 pub struct CodeParser;
 
