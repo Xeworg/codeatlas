@@ -158,6 +158,42 @@ impl<'pool> ProjectRepository<'pool> {
         Ok(())
     }
 
+    /// Look up a project by its root path. Returns full metadata without files.
+    pub fn get_project_by_path(
+        &self,
+        root_path: &str,
+    ) -> SqliteResult<Option<crate::models::ProjectMeta>> {
+        self.pool.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, name, root_path, files_count, symbols_count, imports_count,
+                        scan_duration_ms, status, error
+                 FROM projects WHERE root_path = ?1",
+            )?;
+            stmt.query_row(params![root_path], |row| {
+                let status_str: String = row.get(7)?;
+                let status = match status_str.as_str() {
+                    "scanning" => crate::models::ScanStatus::Scanning,
+                    "building_graph" => crate::models::ScanStatus::BuildingGraph,
+                    "ready" => crate::models::ScanStatus::Ready,
+                    "error" => crate::models::ScanStatus::Error,
+                    _ => crate::models::ScanStatus::Idle,
+                };
+                Ok(crate::models::ProjectMeta {
+                    project_id: row.get(0)?,
+                    project_name: row.get(1)?,
+                    root_path: row.get(2)?,
+                    files_count: row.get::<_, i64>(3)? as usize,
+                    symbols_count: row.get::<_, i64>(4)? as usize,
+                    imports_count: row.get::<_, i64>(5)? as usize,
+                    scan_duration_ms: row.get::<_, i64>(6)? as u64,
+                    status,
+                    error: row.get(8)?,
+                })
+            })
+            .optional()
+        })
+    }
+
     pub fn get_project(&self, project_id: &str) -> SqliteResult<Option<(String, String, i64)>> {
         self.pool.with_connection(|conn| {
             conn.query_row(
@@ -2248,5 +2284,100 @@ mod tests {
         assert_eq!(result.level, 2);
         assert!(result.containers.is_some());
         assert!(result.warning.is_some());
+    }
+
+    // ====================================================================
+    // Reopen-flow: get_project_by_path
+    // ====================================================================
+
+    #[test]
+    fn get_project_by_path_returns_meta_when_exists() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        let result = ScanResult {
+            project_id: "proj-reopen".into(),
+            project_name: "ReopenTest".into(),
+            root_path: "/tmp/reopen-test".into(),
+            files_count: 3,
+            symbols_count: 10,
+            imports_count: 2,
+            files: vec![],
+            scan_duration_ms: 500,
+            status: ScanStatus::Ready,
+            error: None,
+        };
+        repo.save_scan_result(&result).unwrap();
+
+        let meta = repo.get_project_by_path("/tmp/reopen-test").unwrap();
+        assert!(meta.is_some());
+        let meta = meta.unwrap();
+        assert_eq!(meta.project_id, "proj-reopen");
+        assert_eq!(meta.project_name, "ReopenTest");
+        assert_eq!(meta.root_path, "/tmp/reopen-test");
+        assert_eq!(meta.files_count, 3);
+        assert_eq!(meta.symbols_count, 10);
+        assert_eq!(meta.imports_count, 2);
+        assert_eq!(meta.scan_duration_ms, 500);
+        assert!(matches!(meta.status, ScanStatus::Ready));
+        assert!(meta.error.is_none());
+    }
+
+    #[test]
+    fn get_project_by_path_returns_none_when_missing() {
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        let meta = repo.get_project_by_path("/nonexistent/path").unwrap();
+        assert!(meta.is_none());
+    }
+
+    #[test]
+    fn get_project_by_path_unique_per_root_path() {
+        // Two projects with different ids but same root_path: only one can exist
+        let pool = DbPool::in_memory().unwrap();
+        pool.init_schema().unwrap();
+        let repo = ProjectRepository::new(&pool);
+
+        let result1 = ScanResult {
+            project_id: "proj-first".into(),
+            project_name: "First".into(),
+            root_path: "/tmp/shared-path".into(),
+            files_count: 1,
+            symbols_count: 1,
+            imports_count: 0,
+            files: vec![],
+            scan_duration_ms: 100,
+            status: ScanStatus::Ready,
+            error: None,
+        };
+        repo.save_scan_result(&result1).unwrap();
+
+        // Same root_path, different project_id — UNIQUE constraint on root_path
+        let result2 = ScanResult {
+            project_id: "proj-second".into(),
+            project_name: "Second".into(),
+            root_path: "/tmp/shared-path".into(),
+            files_count: 2,
+            symbols_count: 5,
+            imports_count: 1,
+            files: vec![],
+            scan_duration_ms: 200,
+            status: ScanStatus::Ready,
+            error: None,
+        };
+        let err = repo.save_scan_result(&result2).unwrap_err();
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("UNIQUE constraint failed: projects.root_path"),
+            "Expected UNIQUE constraint error, got: {err_str}"
+        );
+
+        // Only the first project is reachable by path
+        let meta = repo.get_project_by_path("/tmp/shared-path").unwrap();
+        assert!(meta.is_some());
+        assert_eq!(meta.unwrap().project_id, "proj-first");
     }
 }

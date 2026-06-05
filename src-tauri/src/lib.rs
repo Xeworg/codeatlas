@@ -57,6 +57,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::scan_project,
+            commands::open_project_by_path,
             commands::get_scan_status,
             commands::get_graph,
             commands::get_node_details,

@@ -22,6 +22,8 @@ function toApiError(err: unknown, fallbackCode: ErrorCode = 'INTERNAL'): ApiErro
   let code: ErrorCode = fallbackCode
   if (msg.includes('ENOENT') || msg.includes('not found') || msg.includes('PATH_NOT_FOUND')) {
     code = 'PATH_NOT_FOUND'
+  } else if (msg.includes('already exists') || msg.includes('Project already exists')) {
+    code = 'PROJECT_EXISTS'
   } else if (msg.includes('EACCES') || msg.includes('ACCESS_DENIED')) {
     code = 'ACCESS_DENIED'
   } else if (msg.includes('timeout') || msg.includes('TIMEOUT')) {
@@ -74,7 +76,17 @@ export async function scanProject(path: string): Promise<ScanResult> {
   try {
     return await invoke<ScanResult>('scan_project', { path })
   } catch (e) {
-    throw toApiError(e, 'PATH_NOT_FOUND')
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+// MARK: Project reopen / load by path ---
+
+export async function openProjectByPath(path: string): Promise<ScanResult> {
+  try {
+    return await invoke<ScanResult>('open_project_by_path', { path })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
   }
 }
 

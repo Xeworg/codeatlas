@@ -25,6 +25,7 @@ import { useProjectStore, useScanStatus } from './stores/projectStore'
 import { useGraphStore, useSelectedNodeId } from './stores/graphStore'
 import {
   scanProject,
+  openProjectByPath,
   getGraph,
   getErrorMessage,
   getArchitectureDetection,
@@ -33,7 +34,12 @@ import {
 } from './lib/tauri-api'
 import { buildLayout } from './lib/graph-layout'
 import { V3_H1_ENABLED } from './stores/featureFlags'
-import type { ArchitectureDetectionResult, ImpactAnalysisResult, GraphInsights } from './lib/types'
+import type {
+  ArchitectureDetectionResult,
+  ImpactAnalysisResult,
+  GraphInsights,
+  ScanResult,
+} from './lib/types'
 
 type DetailTab = 'details' | 'ai' | 'chat' | 'impact'
 
@@ -123,17 +129,57 @@ function App() {
       const path = selected as string
       const name = path.split('/').pop() ?? 'Project'
 
-      // Reset analytics state for new project
+      // Reset analytics state for new/reopened project
       setArchitectureDetection(null)
       setImpactAnalysis(null)
       setGraphInsights(null)
       prevProjectId.current = null
+      setLoading(true)
+      setScanStartTime(Date.now())
 
-      // Temporary project marker while scan runs
+      // Step 1: Try to reopen an already-indexed project (no re-scan needed)
+      let reopenResult: ScanResult | null = null
+      try {
+        reopenResult = await openProjectByPath(path)
+      } catch (reopenErr) {
+        // Path is not in DB — fall through to fresh scan below.
+        // Only the explicit "not found in DB" case should continue to a fresh scan.
+        const reopenErrMsg = getErrorMessage(reopenErr)
+        if (!reopenErrMsg.includes('No project found')) {
+          setError(reopenErrMsg)
+          setLoading(false)
+          return
+        }
+      }
+
+      if (reopenResult) {
+        setScanResult(reopenResult)
+        setStatus(reopenResult.status)
+        if (reopenResult.projectId) {
+          setProject(
+            reopenResult.projectId,
+            reopenResult.projectName || name,
+            reopenResult.rootPath || path
+          )
+        }
+        if (reopenResult.status === 'ready' && reopenResult.projectId) {
+          try {
+            const graph = await getGraph(reopenResult.projectId)
+            const laid = buildLayout(graph)
+            setGraphData(laid)
+          } catch (graphErr) {
+            setError(`Graph load failed: ${getErrorMessage(graphErr)}`)
+            setLoading(false)
+            return
+          }
+        }
+        setLoading(false)
+        return
+      }
+
+      // Step 2: Fresh scan for paths not yet indexed
       setProject(`proj-${Date.now()}`, name, path)
       setStatus('scanning')
-      setScanStartTime(Date.now())
-      setLoading(true)
 
       const result = await scanProject(path)
       setScanResult(result)

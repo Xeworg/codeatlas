@@ -30,6 +30,23 @@ pub struct ScanResult {
     pub error: Option<String>,
 }
 
+/// Minimal project metadata returned by read-only reopen/load-by-path operations.
+/// Does not include files (those are fetched separately by get_files).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMeta {
+    pub project_id: String,
+    pub project_name: String,
+    pub root_path: String,
+    pub files_count: usize,
+    pub symbols_count: usize,
+    pub imports_count: usize,
+    pub scan_duration_ms: u64,
+    pub status: ScanStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

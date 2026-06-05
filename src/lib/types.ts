@@ -157,6 +157,7 @@ export interface ApiError {
 
 export type ErrorCode =
   | 'PATH_NOT_FOUND'
+  | 'PROJECT_EXISTS'
   | 'ACCESS_DENIED'
   | 'SCAN_TIMEOUT'
   | 'INVALID_KEY'

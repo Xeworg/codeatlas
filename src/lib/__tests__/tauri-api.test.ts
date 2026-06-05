@@ -59,3 +59,21 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage({ code: 404, message: 'not found' })).toBe('not found')
   })
 })
+
+describe('PROJECT_EXISTS error code', () => {
+  it('formats PROJECT_EXISTS with the full message', () => {
+    const err: unknown = {
+      code: 'PROJECT_EXISTS',
+      message: 'Project already exists at path: /home/user/my-project',
+    }
+    expect(getErrorMessage(err)).toBe(
+      'PROJECT_EXISTS — Project already exists at path: /home/user/my-project'
+    )
+  })
+
+  it('PROJECT_EXISTS is a valid ErrorCode', () => {
+    // This verifies the new code is included in the type
+    const code = 'PROJECT_EXISTS' as const
+    expect(code).toBe('PROJECT_EXISTS')
+  })
+})

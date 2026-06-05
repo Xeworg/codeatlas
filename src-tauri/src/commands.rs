@@ -319,6 +319,71 @@ pub fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusResponse,
     })
 }
 
+/// Reopen a previously indexed project by its root path.
+///
+/// 1. Looks up the existing project row via `repo.get_project_by_path`.
+/// 2. If not found, returns an error — caller should fall back to a fresh scan.
+/// 3. If found, hydrates `files` from DB (with symbols), updates in-memory app
+///    state (`project_root`, `scan_status`), and returns a `ScanResult`-shaped
+///    response so the frontend can reopen the project without re-indexing.
+///
+/// File IDs are stable across reopens because they are stored in the DB.
+/// No re-scan is performed; the caller is responsible for fetching the graph
+/// via `get_graph` after calling this command.
+#[tauri::command]
+pub fn open_project_by_path(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<ScanResult, String> {
+    let repo = ProjectRepository::new(&state.db);
+
+    let meta = repo
+        .get_project_by_path(&path)
+        .map_err(|e| format!("DB error looking up project by path: {}", e))?
+        .ok_or_else(|| format!("No project found at path: {}", path))?;
+
+    // Hydrate files with symbols from DB
+    let files = repo
+        .get_files(&meta.project_id)
+        .map_err(|e| format!("DB error loading files: {}", e))?;
+
+    // Update in-memory state so subsequent commands (get_graph, etc.) are valid
+    {
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = match meta.status {
+            engine::models::ScanStatus::Idle => ScanStatus::Idle,
+            engine::models::ScanStatus::Scanning => ScanStatus::Scanning,
+            engine::models::ScanStatus::BuildingGraph => ScanStatus::BuildingGraph,
+            engine::models::ScanStatus::Ready => ScanStatus::Ready,
+            engine::models::ScanStatus::Error => ScanStatus::Error,
+        };
+    }
+    {
+        let mut pr = state.project_root.lock().map_err(|e| e.to_string())?;
+        *pr = path.clone();
+    }
+
+    tracing::info!(
+        project_id = %meta.project_id,
+        root_path = %path,
+        files_loaded = %files.len(),
+        "project reopened from DB"
+    );
+
+    Ok(ScanResult {
+        project_id: meta.project_id,
+        project_name: meta.project_name,
+        root_path: meta.root_path,
+        files_count: meta.files_count,
+        symbols_count: meta.symbols_count,
+        imports_count: meta.imports_count,
+        files,
+        scan_duration_ms: meta.scan_duration_ms,
+        status: meta.status,
+        error: meta.error,
+    })
+}
+
 // MARK: Graph Commands
 
 #[tauri::command]
