@@ -57,32 +57,40 @@ mod single_dispatch_tests {
         }
     }
 
+    fn write_fixture(root: &std::path::Path, rel: &str, content: &str) -> String {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create fixture parent dirs");
+        }
+        std::fs::write(&path, content).expect("write fixture file");
+        path.to_string_lossy().into_owned()
+    }
+
     /// RED test: scan_files calls registry exactly N times for N files.
     #[test]
     fn scan_files_calls_registry_exactly_n_times() {
-        // GIVEN 3 discovered files with real paths on disk.
-        // scan_files reads files from disk, so use /tmp paths that exist.
+        let root = std::env::temp_dir().join(format!("engine_cmd_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create temp root");
         let files = vec![
             DiscoveredFile {
-                path: "/tmp/engine_cmd_test/a.ts".into(),
+                path: write_fixture(&root, "a.ts", "export const a = 1;"),
                 relative_path: "src/a.ts".into(),
                 extension: "ts".into(),
                 size_bytes: 100,
             },
             DiscoveredFile {
-                path: "/tmp/engine_cmd_test/b.ts".into(),
+                path: write_fixture(&root, "b.ts", "export const b = 2;"),
                 relative_path: "src/b.ts".into(),
                 extension: "ts".into(),
                 size_bytes: 100,
             },
             DiscoveredFile {
-                path: "/tmp/engine_cmd_test/c.rs".into(),
+                path: write_fixture(&root, "c.rs", "fn c() {}"),
                 relative_path: "src/c.rs".into(),
                 extension: "rs".into(),
                 size_bytes: 100,
             },
         ];
-        let root = std::path::PathBuf::from("/tmp/engine_cmd_test");
         let registry = TrackingRegistry::new();
 
         // WHEN scan_files is called
@@ -99,18 +107,21 @@ mod single_dispatch_tests {
             3,
             "scan_files must return one FileInfo per discovered file"
         );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// GREEN test: scan_files propagates symbols and imports into the right shape.
     #[test]
     fn scan_files_propagates_symbols_and_imports() {
+        let root = std::env::temp_dir().join(format!("engine_cmd_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create temp root");
         let files = vec![DiscoveredFile {
-            path: "/tmp/engine_cmd_test/a.ts".into(),
+            path: write_fixture(&root, "service.ts", "export const service = () => 1;"),
             relative_path: "src/service.ts".into(),
             extension: "ts".into(),
             size_bytes: 100,
         }];
-        let root = std::path::PathBuf::from("/tmp/engine_cmd_test");
         let registry = TrackingRegistry::new();
 
         let output: ScanFilesOutput = scan_files(&registry, &files, &root);
@@ -125,6 +136,8 @@ mod single_dispatch_tests {
         );
         // Parse metadata is tracked
         assert_eq!(output.registry_call_count, 1);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 
