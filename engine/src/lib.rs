@@ -3,14 +3,15 @@
 //!
 //! Public API re-exports only the public surface.
 
+pub mod ai;
+pub mod analysis;
+pub mod commands;
+pub mod db;
+pub mod graph;
 pub mod models;
 pub mod scanner;
-pub mod graph;
-pub mod ai;
-pub mod db;
-pub mod analysis;
 
-pub use models::{ScanResult, FileInfo, GraphData, NodeType, ScanStatus};
+pub use models::{FileInfo, GraphData, NodeType, ScanResult, ScanStatus};
 pub use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, AppError>;

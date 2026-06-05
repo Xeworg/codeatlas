@@ -31,7 +31,7 @@ export const useGraphStore = create<GraphState>((set) => ({
   isLoading: false,
   error: null,
 
-  setGraphData: (data) => set({ graphData: data, error: null }),
+  setGraphData: (data) => set({ graphData: data }),
 
   selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
 

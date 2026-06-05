@@ -11,6 +11,7 @@ import type {
   ChatResponse,
   AIConfig,
   ScanStatus,
+  OutlineItem,
 } from './types'
 import type { ApiError, ErrorCode } from './types'
 
@@ -47,6 +48,24 @@ function toApiError(err: unknown, fallbackCode: ErrorCode = 'INTERNAL'): ApiErro
     code = 'UNREACHABLE'
   }
   return { code, message: msg }
+}
+
+/**
+ * Extract a human-readable message from any thrown value.
+ * Handles Error instances, plain objects, strings, and null/undefined.
+ * Preserves `{ code, message }` shape for downstream consumers.
+ */
+export function getErrorMessage(err: unknown): string {
+  if (err === null || err === undefined) return 'Unknown error'
+  if (typeof err === 'string') return err
+  if (typeof err === 'object' && 'message' in err) {
+    const msg = String((err as Record<string, unknown>).message)
+    if ('code' in err && typeof (err as Record<string, unknown>).code === 'string') {
+      return `${(err as Record<string, unknown>).code} — ${msg}`
+    }
+    return msg
+  }
+  return 'Unknown error'
 }
 
 // MARK: Project & Scanning ---
@@ -88,6 +107,14 @@ export async function getGraph(projectId: string): Promise<GraphData> {
 export async function getNodeDetails(nodeId: string): Promise<FileInfo> {
   try {
     return await invoke<FileInfo>('get_node_details', { nodeId })
+  } catch (e) {
+    throw toApiError(e)
+  }
+}
+
+export async function getNodeOutline(nodeId: string): Promise<OutlineItem[]> {
+  try {
+    return await invoke<OutlineItem[]>('get_node_outline', { nodeId })
   } catch (e) {
     throw toApiError(e)
   }
@@ -184,6 +211,17 @@ import type {
   ExportPayload,
 } from './types'
 
+// MARK: v3 Workspace Commands
+
+import type {
+  Workspace,
+  WorkspaceProject,
+  Snapshot,
+  ExecutiveArchitectureSummary,
+  SnapshotDiffPayload,
+  C4ViewPayload,
+} from './types-v3'
+
 // MARK: v2 Analysis Commands
 
 /**
@@ -236,15 +274,176 @@ export async function exportView(
   format: 'json' | 'png'
 ): Promise<ExportPayload> {
   try {
-    // JSON export is served by the backend.
-    // PNG export delegates to the frontend render pipeline (useExport hook).
     if (format === 'json') {
       return await invoke<ExportPayload>('export_view', { projectId, format })
     }
-    // PNG format is handled client-side by the useExport hook.
-    // This branch exists for protocol symmetry; callers should use
-    // the useExport hook for PNG exports.
     throw Object.assign(new Error('PNG format handled client-side'), { code: 'INTERNAL' })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+// MARK: v3 Workspace Commands
+
+export async function createWorkspace(name: string): Promise<Workspace> {
+  try {
+    return await invoke<Workspace>('create_workspace', { name })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function listWorkspaces(): Promise<Workspace[]> {
+  try {
+    return await invoke<Workspace[]>('list_workspaces')
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function attachProjectToWorkspace(
+  workspaceId: string,
+  projectId: string
+): Promise<void> {
+  try {
+    await invoke<void>('attach_project_to_workspace', { workspaceId, projectId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function listWorkspaceProjects(workspaceId: string): Promise<WorkspaceProject[]> {
+  try {
+    return await invoke<WorkspaceProject[]>('list_workspace_projects', { workspaceId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+// ── Snapshots (PR5: full payload capture) ──────────────────────────────
+
+export async function createSnapshot(
+  projectId: string,
+  label: string,
+  workspaceId?: string
+): Promise<Snapshot> {
+  try {
+    return await invoke<Snapshot>('create_snapshot', { projectId, label, workspaceId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function getSnapshot(snapshotId: string): Promise<Snapshot | null> {
+  try {
+    return await invoke<Snapshot | null>('get_snapshot', { snapshotId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function listSnapshots(projectId: string, workspaceId?: string): Promise<Snapshot[]> {
+  try {
+    return await invoke<Snapshot[]>('list_snapshots', { projectId, workspaceId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+// ── Annotations (PR6) ─────────────────────────────────────────────────────
+
+export interface Annotation {
+  id: string
+  projectId: string
+  nodeId: string
+  author: string
+  kind: 'comment' | 'todo' | 'review' | 'issue'
+  text: string
+  createdAt: string
+}
+
+export async function addComment(
+  projectId: string,
+  nodeId: string,
+  author: string,
+  text: string,
+  kind?: string
+): Promise<Annotation> {
+  try {
+    return await invoke<Annotation>('add_comment', { projectId, nodeId, author, text, kind })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function listComments(projectId: string, nodeId?: string): Promise<Annotation[]> {
+  try {
+    return await invoke<Annotation[]>('list_comments', { projectId, nodeId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export interface HealthTimeline {
+  records: HealthRecord[]
+  projectId: string
+  from: string
+  to: string
+}
+
+export interface HealthRecord {
+  id: string
+  recordedAt: string
+  overallScore: number
+  couplingScore: number
+  complexityScore: number
+  cycleCount: number
+  hotspotCount: number
+}
+
+export async function getHealthTimeline(
+  projectId: string,
+  from: string,
+  to: string
+): Promise<HealthTimeline> {
+  try {
+    return await invoke<HealthTimeline>('get_health_timeline', { projectId, from, to })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+// ========================================================================
+// H3 — Executive Summary + Diff + C4 Views
+// ========================================================================
+
+export async function getExecutiveSummary(
+  workspaceId: string
+): Promise<ExecutiveArchitectureSummary> {
+  try {
+    return await invoke<ExecutiveArchitectureSummary>('get_executive_summary', { workspaceId })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function compareSnapshots(
+  baseSnapshotId: string,
+  targetSnapshotId: string
+): Promise<SnapshotDiffPayload> {
+  try {
+    return await invoke<SnapshotDiffPayload>('compare_snapshots', {
+      baseSnapshotId,
+      targetSnapshotId,
+    })
+  } catch (e) {
+    throw toApiError(e, 'INTERNAL')
+  }
+}
+
+export async function getC4View(projectId: string, level: 1 | 2): Promise<C4ViewPayload> {
+  try {
+    return await invoke<C4ViewPayload>('get_c4_view', { projectId, level })
   } catch (e) {
     throw toApiError(e, 'INTERNAL')
   }

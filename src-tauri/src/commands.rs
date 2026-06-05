@@ -3,14 +3,16 @@
 //! All commands return timing metadata where applicable.
 
 use engine::{
-    ai::{AnthropicProvider, ContextBuilder, AIProvider},
+    ai::{AIProvider, AnthropicProvider, ContextBuilder},
+    commands::{outline_for_file, scan_files, ScanFilesOutput},
     db::{DbPool, ProjectRepository},
     graph::{GraphBuilder, PathResolver},
-    models::{ChatMessage, FileInfo, GraphData, NodeExplanation, ScanResult},
-    scanner::{CodeParser, FileWalker},
-    AppError, Result,
+    models::{ChatMessage, FileInfo, GraphData, NodeExplanation, OutlineItem, ScanResult},
+    scanner::parser::ParserRegistry,
+    scanner::walker::FileWalker,
 };
-use std::{sync::Mutex, time::Instant};
+
+use std::{path::Path, sync::Mutex, time::Instant};
 use tauri::State;
 
 // Global state
@@ -26,16 +28,6 @@ pub struct AppState {
 pub struct ScanStatusResponse {
     pub status: String,
     pub progress: f32,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ScanTiming {
-    pub discover_ms: u64,
-    pub parse_ms: u64,
-    pub total_ms: u64,
-    pub files_count: usize,
-    pub symbols_count: usize,
-    pub imports_count: usize,
 }
 
 // MARK: Project & Scanning Commands
@@ -54,77 +46,238 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
     let discovered = walker.discover();
     let discover_ms = discover_start.elapsed().as_millis() as u64;
 
-    let parse_start = Instant::now();
-    let mut files: Vec<FileInfo> = Vec::new();
+    // Phase 1 & 2 consolidated: single dispatch — registry called exactly once per file.
+    // scan_files returns file_infos (from result.symbols) and all_imports.
+    let registry = ParserRegistry::new();
+    let scan_output: ScanFilesOutput =
+        scan_files(&registry, &discovered, std::path::Path::new(&path));
+    let parse_ms = scan_output.parse_ms;
+    let total_ms = discover_ms + parse_ms;
+    let symbols_count: usize = scan_output
+        .file_infos
+        .iter()
+        .map(|f| f.symbols.len())
+        .sum();
+
+    // Build path → UUID lookup for resolving imports
+    let path_to_id: std::collections::HashMap<String, String> = scan_output
+        .file_infos
+        .iter()
+        .map(|f| (f.path.clone(), f.id.clone()))
+        .collect();
+
+    // Resolve all imports with correct source/target file IDs.
+    // The registry (Phase 1+2 via scan_files) sets source_file_id = relative_path
+    // so that PathResolver can use it for target resolution. Now convert it to
+    // the persisted file UUID so get_imports(project_id) finds them via
+    // `WHERE source_file_id IN (SELECT id FROM files ...)`. Generate a stable
+    // import id from the source-target pair so rescan is idempotent.
+    let resolver = PathResolver::new(&path);
     let mut all_imports: Vec<engine::models::ImportInfo> = Vec::new();
-
-    for file in &discovered {
-        let content = match std::fs::read_to_string(&file.path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let (symbols, imports) =
-            CodeParser::parse_file(&file.path, &content, &file.extension);
-
-        let file_info = FileInfo {
-            id: uuid::Uuid::new_v4().to_string(),
-            path: file.relative_path.clone(),
-            name: file.path.split('/').last().unwrap_or("").to_string(),
-            extension: file.extension.clone(),
-            symbols,
-            lines: content.lines().count() as u32,
-        };
-
-        // Update imports with resolved targets
-        let resolver = PathResolver::new(&path);
-        let resolved_imports: Vec<engine::models::ImportInfo> = imports
-            .into_iter()
-            .map(|mut imp| {
-                if let Some(ref module) = imp.target_module {
-                    let res = resolver.resolve(module, &file.relative_path);
-                    match res {
-                        crate::graph::resolver::Resolution::Internal(p) => {
-                            imp.target_file_id = files.iter().find(|f| f.path == p).map(|f| f.id.clone());
-                        }
-                        crate::graph::resolver::Resolution::External(_) => {}
-                        crate::graph::resolver::Resolution::Unresolved(_) => {}
-                    }
+    for mut imp in scan_output.all_imports {
+        // Convert source: relative_path → persisted UUID
+        if let Some(uuid) = path_to_id.get(&imp.source_file_id) {
+            imp.source_file_id = uuid.clone();
+        }
+        if let Some(ref module) = imp.target_module {
+            // resolver needs the relative_path for internal resolution — imp.source_file_id
+            // already holds the UUID at this point, so use it for target resolution only
+            // when the resolver can handle UUIDs. Pass the original relative_path by
+            // looking it up in path_to_id (reverse lookup: UUID → relative_path).
+            let rel_path = path_to_id
+                .iter()
+                .find(|(_, v)| *v == &imp.source_file_id)
+                .map(|(k, _)| k.clone())
+                .unwrap_or_else(|| imp.source_file_id.clone());
+            let res = resolver.resolve(module, &rel_path);
+            match res {
+                engine::graph::resolver::Resolution::Internal(p) => {
+                    imp.target_file_id = path_to_id.get(&p).cloned();
                 }
-                imp
-            })
-            .collect();
-
-        all_imports.extend(resolved_imports);
-        files.push(file_info);
+                engine::graph::resolver::Resolution::External(_) => {}
+                engine::graph::resolver::Resolution::Unresolved(_) => {}
+            }
+        }
+        all_imports.push(imp);
     }
 
-    let parse_ms = parse_start.elapsed().as_millis() as u64;
-    let total_ms = discover_ms + parse_ms;
-    let symbols_count: usize = files.iter().map(|f| f.symbols.len()).sum();
-    let imports_count = all_imports.len();
+    // file_infos carried from scan_files output
+    let file_infos = scan_output.file_infos;
 
-    let result = ScanResult {
+
+    let repo = ProjectRepository::new(&state.db);
+
+    // Save project and files before imports. Imports reference files(id), so
+    // persisting them first can create orphan rows or fail once FK enforcement is on.
+    let mut result = ScanResult {
         project_id: uuid::Uuid::new_v4().to_string(),
-        project_name: path.split('/').last().unwrap_or("Project").to_string(),
-        root_path: path,
-        files_count: files.len(),
+        project_name: path.split('/').next_back().unwrap_or("Project").to_string(),
+        root_path: path.clone(),
+        files_count: file_infos.len(),
         symbols_count,
-        imports_count,
-        files,
+        imports_count: 0,
+        files: file_infos,
         scan_duration_ms: total_ms,
         status: engine::models::ScanStatus::Ready,
         error: None,
     };
 
-    // Persist
-    if let Ok(repo) = ProjectRepository::new(&state.db) {
-        let _ = repo.save_scan_result(&result);
+    // ── scan lifecycle: START ────────────────────────────────────────────────────
+    tracing::info!(
+        project_id = %result.project_id,
+        root_path = %path,
+        files_discovered = %discovered.len(),
+        "scan started"
+    );
+
+    if let Err(e) = repo.save_scan_result(&result) {
+        let err_str = e.to_string();
+        let mapped = if is_root_path_conflict(&err_str) {
+            map_save_scan_result_error(&err_str, &path, &result.project_id)
+        } else {
+            tracing::error!(
+                project_id = %result.project_id,
+                root_path = %path,
+                error_detail = %err_str,
+                "failed to save initial scan result"
+            );
+            format!("Failed to save scan result: {}", err_str)
+        };
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::Error;
+        return Err(mapped);
+    }
+
+    // Transition to graph-building state while import edges are persisted.
+    {
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::BuildingGraph;
+    }
+
+    let parsed_count = all_imports.len();
+    let mut skipped_empty = 0usize;
+    let mut persist_errors = 0usize;
+    let mut persisted_count = 0usize;
+
+    for imp in &all_imports {
+        // Guard: skip imports with no source file ID — these produce orphan edges
+        // that would be filtered out downstream and mask the real resolver failure.
+        if imp.source_file_id.is_empty() {
+            skipped_empty += 1;
+            tracing::debug!("Skipping import with empty source_file_id: {:?}", imp);
+            continue;
+        }
+
+        match repo.save_import(imp) {
+            Ok(()) => {
+                persisted_count += 1;
+            }
+            Err(e) => {
+                persist_errors += 1;
+                tracing::debug!("Failed to persist import {:?}: {}", imp, e);
+            }
+        }
+    }
+
+    // Phase 3: Persist outline items using outline_for_file (single dispatch per file).
+    // Phase 1+2 are already single-dispatch via scan_files; Phase 3 also uses
+    // outline_for_file (which calls registry exactly once) so the full scan
+    // achieves single-parse-per-file across all 3 phases.
+    let mut outline_skipped = 0usize;
+    let mut outline_errors = 0usize;
+    let phase3_registry = ParserRegistry::new();
+    for file in &discovered {
+        let file_id = match path_to_id.get(&file.relative_path) {
+            Some(id) => id,
+            None => {
+                outline_skipped += 1;
+                continue;
+            }
+        };
+
+        let content = match std::fs::read_to_string(&file.path) {
+            Ok(c) => c,
+            Err(_) => {
+                outline_errors += 1;
+                continue;
+            }
+        };
+
+        let outline = outline_for_file(
+            &phase3_registry,
+            file_id,
+            &file.path,
+            &content,
+            &file.extension,
+        );
+
+        if !outline.is_empty() {
+            if let Err(e) = repo.save_outline_items(file_id, &outline) {
+                tracing::debug!("Failed to persist outline for {}: {}", file_id, e);
+                outline_errors += 1;
+            }
+        }
+    }
+
+    tracing::info!(
+        "Outline persistence: {} skipped (no file id), {} errors out of {} files",
+        outline_skipped,
+        outline_errors,
+        discovered.len()
+    );
+
+    // Use persisted count as the authoritative number — what actually lands in the DB.
+    // If >50% of non-empty imports fail to persist, surface it in the result so the
+    // frontend can reflect a degraded scan rather than silently returning Ready.
+    let non_empty_total = parsed_count.saturating_sub(skipped_empty);
+    let failure_count = skipped_empty + persist_errors;
+    let degraded = non_empty_total > 0 && failure_count > non_empty_total / 2;
+
+    result.imports_count = persisted_count;
+    if degraded {
+        result.status = engine::models::ScanStatus::Error;
+        result.error = Some(format!(
+            "Import persistence degraded: {} parsed, {} skipped (empty source), {} DB errors, {} persisted",
+            parsed_count, skipped_empty, persist_errors, persisted_count
+        ));
+    }
+
+    tracing::info!(
+        "Import persistence: {} parsed, {} skipped, {} errors, {} persisted{}{}",
+        parsed_count,
+        skipped_empty,
+        persist_errors,
+        persisted_count,
+        if failure_count > 0 { " [DEGRADED]" } else { "" },
+        if degraded { " [SURFACED AS ERROR]" } else { "" },
+    );
+
+    // Persist final authoritative import count/status after import persistence.
+    if let Err(e) = repo.save_scan_result(&result) {
+        let err_str = e.to_string();
+        let mapped = if is_root_path_conflict(&err_str) {
+            map_save_scan_result_error(&err_str, &path, &result.project_id)
+        } else {
+            tracing::error!(
+                project_id = %result.project_id,
+                root_path = %path,
+                error_detail = %err_str,
+                "failed to update scan result after import persistence"
+            );
+            format!("Failed to update scan result: {}", err_str)
+        };
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::Error;
+        return Err(mapped);
     }
 
     {
         let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
-        *status = ScanStatus::Ready;
+        *status = if degraded {
+            ScanStatus::Error
+        } else {
+            ScanStatus::Ready
+        };
     }
 
     // Track project root so AI commands can read files from disk
@@ -132,6 +285,16 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         let mut pr = state.project_root.lock().map_err(|e| e.to_string())?;
         *pr = root_for_state;
     }
+
+    // ── scan lifecycle: COMPLETION ─────────────────────────────────────────────
+    tracing::info!(
+        project_id = %result.project_id,
+        files_persisted = %result.files_count,
+        symbols_count = %result.symbols_count,
+        imports_count = %result.imports_count,
+        duration_ms = %result.scan_duration_ms,
+        "scan completed"
+    );
 
     Ok(result)
 }
@@ -159,24 +322,72 @@ pub fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusResponse,
 // MARK: Graph Commands
 
 #[tauri::command]
-pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result<GraphData, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+pub async fn get_graph(
+    project_id: String,
+    state: State<'_, AppState>,
+) -> Result<GraphData, String> {
+    // Set building-graph state so UI can reflect progress
+    {
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::BuildingGraph;
+    }
+
+    let repo = ProjectRepository::new(&state.db);
     let build_start = Instant::now();
 
     // Try to return cached graph first
     if let Ok(Some(cached)) = repo.get_graph_cache(&project_id) {
-        let elapsed = build_start.elapsed().as_millis();
-        if elapsed > 0 {
-            tracing::info!("Graph cache hit for {} ({}ms)", project_id, elapsed);
+        tracing::info!(
+            project_id = %project_id,
+            cache_hit = true,
+            elapsed_ms = %build_start.elapsed().as_millis() as u64,
+            "graph retrieved from cache"
+        );
+        {
+            let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+            *status = ScanStatus::Ready;
         }
         return serde_json::from_str(&cached).map_err(|e| e.to_string());
     }
 
-    // Build fresh from DB
+    // Build fresh from DB using REAL imports
     let files = repo.get_files(&project_id).map_err(|e| e.to_string())?;
-    let all_imports: Vec<engine::models::ImportInfo> = vec![];
-    let builder = GraphBuilder::new(format!("/projects/{}", project_id));
-    let graph = builder.build(&files, &all_imports).map_err(|e| e.to_string())?;
+
+    if files.is_empty() {
+        tracing::warn!(
+            project_id = %project_id,
+            "graph build: no files found in DB"
+        );
+        {
+            let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+            *status = ScanStatus::Error;
+        }
+        return Err(format!("Project {} has no files in database", project_id));
+    }
+
+    // Load real imports from DB
+    let all_imports = repo.get_imports(&project_id).map_err(|e| e.to_string())?;
+
+    // Use real project root path from DB for stable graph path semantics.
+    let root_path = repo
+        .get_project(&project_id)
+        .ok()
+        .flatten()
+        .map(|(_, root, _)| root)
+        .unwrap_or_else(|| format!("/projects/{}", project_id));
+
+    let builder = GraphBuilder::new(root_path);
+    let mut graph = builder
+        .build(&files, &all_imports)
+        .map_err(|e| e.to_string())?;
+
+    // ReactFlow expects edges to reference existing node ids.
+    // Keep only internal edges that have both endpoints present in current node set.
+    let node_ids: std::collections::HashSet<String> =
+        graph.nodes.iter().map(|n| n.id.clone()).collect();
+    graph
+        .edges
+        .retain(|e| node_ids.contains(&e.source) && node_ids.contains(&e.target));
 
     // Cache it
     if let Ok(graph_json) = serde_json::to_string(&graph) {
@@ -185,22 +396,107 @@ pub async fn get_graph(project_id: String, state: State<'_, AppState>) -> Result
 
     let elapsed = build_start.elapsed().as_millis();
     tracing::info!(
-        "Graph built for {}: {} nodes, {} edges ({}ms)",
-        project_id,
-        graph.nodes.len(),
-        graph.edges.len(),
-        elapsed
+        project_id = %project_id,
+        cache_hit = false,
+        nodes_count = %graph.nodes.len(),
+        edges_count = %graph.edges.len(),
+        imports_considered = %all_imports.len(),
+        elapsed_ms = %elapsed as u64,
+        "graph built fresh"
     );
+
+    {
+        let mut status = state.scan_status.lock().map_err(|e| e.to_string())?;
+        *status = ScanStatus::Ready;
+    }
 
     Ok(graph)
 }
 
 #[tauri::command]
 pub fn get_node_details(node_id: String, state: State<'_, AppState>) -> Result<FileInfo, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     repo.get_file_by_id(&node_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("File not found: {}", node_id))
+}
+
+/// On-demand outline command.
+///
+/// 1. Try persisted outline from DB.
+/// 2. If empty, load FileInfo to get the relative path, resolve it against
+///    the session project_root (or look it up via DB), read the source file,
+///    parse it, persist the result, and return it.
+///
+/// Safe: read/parse errors yield an empty outline; unsupported files return [].
+#[tauri::command]
+pub fn get_node_outline(
+    node_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<OutlineItem>, String> {
+    let repo = ProjectRepository::new(&state.db);
+
+    // Step 1: fast path — return persisted outline if present
+    let cached = repo
+        .get_outline_items(&node_id)
+        .map_err(|e| e.to_string())?;
+    if !cached.is_empty() {
+        return Ok(cached);
+    }
+
+    // Step 2: on-demand fallback — generate outline if DB is empty
+    let file_info = match repo.get_file_by_id(&node_id).map_err(|e| e.to_string())? {
+        Some(f) => f,
+        None => return Ok(vec![]),
+    };
+
+    // Resolve absolute source path
+    let root_path = {
+        let pr = state.project_root.lock().map_err(|e| e.to_string())?;
+        if pr.is_empty() {
+            // Fallback: look up project root from DB (works after restart too)
+            repo.get_project_root_for_file(&node_id)
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default()
+        } else {
+            pr.clone()
+        }
+    };
+
+    if root_path.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let abs_path = Path::new(&root_path).join(&file_info.path);
+    let registry = ParserRegistry::new();
+
+    let content = match std::fs::read_to_string(&abs_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!("get_node_outline: could not read {:?}: {}", abs_path, e);
+            return Ok(vec![]);
+        }
+    };
+
+    let outline = outline_for_file(
+        &registry,
+        &node_id,
+        &abs_path.to_string_lossy(),
+        &content,
+        &file_info.extension,
+    );
+
+    if !outline.is_empty() {
+        if let Err(e) = repo.save_outline_items(&node_id, &outline) {
+            tracing::debug!(
+                "get_node_outline: failed to persist on-demand outline for {}: {}",
+                node_id,
+                e
+            );
+        }
+    }
+
+    Ok(outline)
 }
 
 #[tauri::command]
@@ -210,7 +506,7 @@ pub fn search_nodes(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<engine::models::GraphNode>, String> {
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
     let limit = limit.unwrap_or(20);
 
     let files = repo
@@ -235,14 +531,19 @@ pub fn search_nodes(
 // MARK: AI Commands
 
 #[tauri::command]
-pub fn configure_ai(config: engine::models::AIConfig, state: State<'_, AppState>) -> Result<(), String> {
+pub fn configure_ai(
+    config: engine::models::AIConfig,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut ai_config = state.ai_config.lock().map_err(|e| e.to_string())?;
     *ai_config = Some(config);
     Ok(())
 }
 
 #[tauri::command]
-pub fn get_ai_config(state: State<'_, AppState>) -> Result<Option<engine::models::AIConfig>, String> {
+pub fn get_ai_config(
+    state: State<'_, AppState>,
+) -> Result<Option<engine::models::AIConfig>, String> {
     let config = state.ai_config.lock().map_err(|e| e.to_string())?;
     Ok(config.clone())
 }
@@ -255,13 +556,17 @@ pub async fn explain_node(
 ) -> Result<NodeExplanation, String> {
     let (config, root_path) = {
         let cfg = state.ai_config.lock().map_err(|e| e.to_string())?.clone();
-        let root = state.project_root.lock().map_err(|e| e.to_string())?.clone();
+        let root = state
+            .project_root
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone();
         (cfg, root)
     };
 
     let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
 
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
 
     // Fetch file metadata from DB
     let file_info = repo
@@ -289,13 +594,21 @@ pub async fn explain_node(
             generated_at: chrono::Utc::now().to_rfc3339(),
         });
 
-    // Build compact context (8KB cap + top-5 deps + top-3 dependents)
-    let context = ContextBuilder::build_node_context(
-        &file_content,
-        &file_info.path,
-        &graph,
-        &node_id,
-    );
+    // Load outline items for this file (non-blocking; empty outline is fine)
+    let outline = repo.get_outline_items(&node_id).unwrap_or_default();
+
+    // Build compact context — prefer semantic outline when available
+    let context = if !outline.is_empty() {
+        ContextBuilder::build_node_context_with_outline(
+            &file_content,
+            &file_info.path,
+            &graph,
+            &node_id,
+            &outline,
+        )
+    } else {
+        ContextBuilder::build_node_context(&file_content, &file_info.path, &graph, &node_id)
+    };
 
     // Build dependency labels list
     let deps: Vec<String> = graph
@@ -324,21 +637,23 @@ pub async fn chat(
 ) -> Result<engine::models::ChatResponse, String> {
     let (config, root_path) = {
         let cfg = state.ai_config.lock().map_err(|e| e.to_string())?.clone();
-        let root = state.project_root.lock().map_err(|e| e.to_string())?.clone();
+        let root = state
+            .project_root
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone();
         (cfg, root)
     };
 
     let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
 
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
 
     // Get project root
-    let project = repo
+    let (_, root, _) = repo
         .get_project(&project_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Project not found: {}", project_id))?;
-
-    let (project_name, root, _) = project;
     let root = if !root.is_empty() { root } else { root_path };
 
     // Fetch project files from DB
@@ -368,8 +683,15 @@ pub async fn chat(
             generated_at: chrono::Utc::now().to_rfc3339(),
         });
 
-    // Build chat context
-    let context = ContextBuilder::build_chat_context(&file_contents, &graph, &message);
+    // Build chat context (use &str refs — ContextBuilder::build_chat_context
+    // takes &[(&str, &str)], file_contents lifetime must outlive the call)
+    let context = {
+        let refs: Vec<(&str, &str)> = file_contents
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        ContextBuilder::build_chat_context(&refs, &graph, &message)
+    };
 
     // Add user message to history
     let mut full_history = history;
@@ -391,9 +713,9 @@ pub async fn chat(
 // MARK: v2 Analysis Commands
 
 use engine::analysis::{
-    ArchitectureDetectionResult as EngineArchResult,
-    compute_impact, compute_graph_insights, ImpactAnalysisResult as EngineImpactResult,
-    graph_insights::GraphInsights as EngineGraphInsights, ImpactConfig, InsightsConfig,
+    compute_graph_insights, compute_impact, graph_insights::GraphInsights as EngineGraphInsights,
+    ArchitectureDetectionResult as EngineArchResult, ImpactAnalysisResult as EngineImpactResult,
+    ImpactConfig, InsightsConfig,
 };
 use serde::Serialize;
 
@@ -497,19 +819,18 @@ pub fn get_architecture_detection(
     );
 
     // Persist for future retrieval
-    if let Ok(repo) = ProjectRepository::new(&state.db) {
-        let evidence_json = result
-            .evidence
-            .as_ref()
-            .map(|e| serde_json::to_string(e).unwrap_or_default())
-            .unwrap_or_default();
-        let _ = repo.save_architecture_detection(
-            &project_id,
-            result.pattern.as_str(),
-            result.confidence,
-            &evidence_json,
-        );
-    }
+    let repo = ProjectRepository::new(&state.db);
+    let evidence_json = result
+        .evidence
+        .as_ref()
+        .map(|e| serde_json::to_string(e).unwrap_or_default())
+        .unwrap_or_default();
+    let _ = repo.save_architecture_detection(
+        &project_id,
+        result.pattern.as_str(),
+        result.confidence,
+        &evidence_json,
+    );
 
     Ok(result.into())
 }
@@ -522,12 +843,7 @@ pub fn get_impact_analysis(
 ) -> Result<ImpactAnalysisResponse, String> {
     let timing_start = std::time::Instant::now();
 
-    let result = compute_impact(
-        &project_id,
-        &node_id,
-        &state.db,
-        &ImpactConfig::default(),
-    );
+    let result = compute_impact(&project_id, &node_id, &state.db, &ImpactConfig::default());
 
     let elapsed_ms = timing_start.elapsed().as_millis() as u64;
     tracing::info!(
@@ -562,22 +878,37 @@ pub fn get_graph_insights(
     );
 
     // Cache in DB
-    if let Ok(repo) = ProjectRepository::new(&state.db) {
-        let cycles_json = serde_json::to_string(&result.cycles).unwrap_or_default();
-        let hotspots_json = serde_json::to_string(&result.hotspots).unwrap_or_default();
-        let _ = repo.save_graph_insights(
-            &project_id,
-            &cycles_json,
-            &hotspots_json,
-            result.avg_coupling,
-            result.density,
-        );
-    }
+    let repo = ProjectRepository::new(&state.db);
+    let cycles_json = serde_json::to_string(&result.cycles).unwrap_or_default();
+    let hotspots_json = serde_json::to_string(&result.hotspots).unwrap_or_default();
+    let _ = repo.save_graph_insights(
+        &project_id,
+        &cycles_json,
+        &hotspots_json,
+        result.avg_coupling,
+        result.density,
+    );
 
     Ok(result.into())
 }
 
 // MARK: Export Commands
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPayloadResponse {
+    pub version: String,
+    pub format: String,
+    pub graph_data: serde_json::Value,
+    pub insights: Option<serde_json::Value>,
+    pub metadata: ExportMetadata,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExportMetadata {
+    pub project_id: String,
+    pub generated_at: String,
+}
 
 /// Export the current graph view and optional insights as a structured payload.
 /// - `json` format: backend serializes GraphData + GraphInsights into ExportPayload.
@@ -606,7 +937,7 @@ pub fn export_view(
         );
     }
 
-    let repo = ProjectRepository::new(&state.db).map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(&state.db);
 
     // Fetch cached graph data
     let graph_json = repo
@@ -627,7 +958,7 @@ pub fn export_view(
     let insights_json: Option<serde_json::Value> = repo
         .get_cached_graph_insights(&project_id)
         .map_err(|e| e.to_string())?
-        .map(|(cycles, hotspots, avg_coupling, density, generated_at)| {
+        .map(|(cycles, hotspots, avg_coupling, density, _): (String, String, f64, f64, String)| {
             serde_json::json!({
                 "version": "2.0",
                 "cycles": serde_json::from_str::<serde_json::Value>(&cycles).unwrap_or(serde_json::json!([])),
@@ -651,7 +982,8 @@ pub fn export_view(
     Ok(ExportPayloadResponse {
         version: "2.0".to_string(),
         format,
-        graph_data: serde_json::from_str(&graph_json).unwrap_or(serde_json::json!({"nodes": [], "edges": []})),
+        graph_data: serde_json::from_str(&graph_json)
+            .unwrap_or(serde_json::json!({"nodes": [], "edges": []})),
         insights: insights_json,
         metadata: ExportMetadata {
             project_id,
@@ -660,40 +992,12 @@ pub fn export_view(
     })
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportPayloadResponse {
-    pub version: String,
-    pub format: String,
-    pub graph_data: serde_json::Value,
-    pub insights: Option<serde_json::Value>,
-    pub metadata: ExportMetadata,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ExportMetadata {
-    pub project_id: String,
-    pub generated_at: String,
-}
-
-/// RED test: export_view command for 'json' format should return a valid ExportPayloadResponse.
 /// Expected to fail before T4.1 is implemented.
 #[cfg(test)]
 mod export_view_tests {
     use super::*;
-    use engine::db::DbPool;
-    use std::sync::Mutex;
 
-    fn make_test_state(pool: DbPool) -> AppState {
-        AppState {
-            db: pool,
-            scan_status: Mutex::new(ScanStatus::Idle),
-            ai_config: Mutex::new(None),
-            project_root: Mutex::new(String::new()),
-        }
-    }
-
-    #[tokio::test]
+    #[test]
     fn export_view_json_format_returns_valid_payload() {
         // This test verifies the ExportPayloadResponse struct shape matches the contract.
         // The actual command will be tested via integration after implementation.
@@ -712,7 +1016,7 @@ mod export_view_tests {
         assert!(payload.insights.is_some());
     }
 
-    #[tokio::test]
+    #[test]
     fn export_view_invalid_format_returns_error() {
         // Verify that format validation logic would reject invalid formats.
         // Currently no implementation exists, so this tests the expected error contract.
@@ -723,9 +1027,53 @@ mod export_view_tests {
     }
 }
 
+// ─── Observability helpers ──────────────────────────────────────────────────
+
+/// Returns true if the given error string indicates a SQLite UNIQUE constraint
+/// violation on the `projects.root_path` column.
+///
+/// SQLite always uses uppercase in error messages. The check is case-sensitive.
+///
+/// # Arguments
+/// * `err` — the error string from `repo.save_scan_result()` (already `.to_string()`'d)
+pub fn is_root_path_conflict(err: &str) -> bool {
+    err.contains("UNIQUE constraint failed: projects.root_path")
+}
+
+/// Maps a `save_scan_result` error string to a user-facing message.
+///
+/// If the error is a `projects.root_path` UNIQUE constraint violation, returns
+/// `"Project already exists at path: {root_path}"`. Otherwise returns the original
+/// error string unchanged.
+///
+/// The root_path conflict case emits a WARN log here. Non-conflict errors are
+/// returned unchanged so callers can add operation-specific ERROR context.
+///
+/// # Arguments
+/// * `err` — the raw error string from `repo.save_scan_result()`
+/// * `root_path` — the project root path (for user-facing message)
+/// * `project_id` — the project ID (for logging context)
+pub fn map_save_scan_result_error(err: &str, root_path: &str, project_id: &str) -> String {
+    if is_root_path_conflict(err) {
+        tracing::warn!(
+            project_id = %project_id,
+            root_path = %root_path,
+            "projects.root_path UNIQUE constraint conflict"
+        );
+        format!("Project already exists at path: {}", root_path)
+    } else {
+        // Non-conflict errors: caller should emit ERROR tracing at the call site
+        err.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests;
+
 // State helpers
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ScanStatus {
+    #[default]
     Idle,
     Scanning,
     BuildingGraph,
@@ -733,8 +1081,396 @@ pub enum ScanStatus {
     Error,
 }
 
-impl Default for ScanStatus {
-    fn default() -> Self {
-        Self::Idle
-    }
+// MARK: v3 Workspace Commands
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceResponse {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceProjectResponse {
+    pub workspace_id: String,
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotResponse {
+    pub id: String,
+    pub project_id: String,
+    pub workspace_id: Option<String>,
+    pub label: String,
+    pub created_at: String,
+    pub payload_json: Option<String>,
+}
+
+#[tauri::command]
+pub fn create_workspace(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<WorkspaceResponse, String> {
+    let repo = ProjectRepository::new(&state.db);
+    let (id, name_out, created_at) = repo.create_workspace(&name).map_err(|e| e.to_string())?;
+    Ok(WorkspaceResponse {
+        id,
+        name: name_out,
+        created_at,
+    })
+}
+
+#[tauri::command]
+pub fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<WorkspaceResponse>, String> {
+    let repo = ProjectRepository::new(&state.db);
+    repo.list_workspaces().map_err(|e| e.to_string()).map(|ws| {
+        ws.into_iter()
+            .map(|(id, name, created_at)| WorkspaceResponse {
+                id,
+                name,
+                created_at,
+            })
+            .collect()
+    })
+}
+
+#[tauri::command]
+pub fn attach_project_to_workspace(
+    workspace_id: String,
+    project_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let repo = ProjectRepository::new(&state.db);
+    repo.attach_project_to_workspace(&workspace_id, &project_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_workspace_projects(
+    workspace_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<WorkspaceProjectResponse>, String> {
+    let repo = ProjectRepository::new(&state.db);
+    repo.list_workspace_projects(&workspace_id)
+        .map_err(|e| e.to_string())
+        .map(|ps| {
+            ps.into_iter()
+                .map(|(workspace_id, project_id)| WorkspaceProjectResponse {
+                    workspace_id,
+                    project_id,
+                })
+                .collect()
+        })
+}
+
+#[tauri::command]
+pub fn create_snapshot(
+    project_id: String,
+    label: String,
+    workspace_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<SnapshotResponse, String> {
+    let repo = ProjectRepository::new(&state.db);
+    let (id, project_id_out, workspace_id_out, label_out, created_at, payload_json) = repo
+        .create_snapshot(&project_id, &label, workspace_id.as_deref())
+        .map_err(|e| e.to_string())?;
+    Ok(SnapshotResponse {
+        id,
+        project_id: project_id_out,
+        workspace_id: workspace_id_out,
+        label: label_out,
+        created_at,
+        payload_json,
+    })
+}
+
+#[tauri::command]
+pub fn get_snapshot(
+    snapshot_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<SnapshotResponse>, String> {
+    let repo = ProjectRepository::new(&state.db);
+    repo.get_snapshot(&snapshot_id)
+        .map_err(|e| e.to_string())
+        .map(|opt| {
+            opt.map(
+                |(id, project_id, workspace_id, label, created_at, payload_json)| {
+                    SnapshotResponse {
+                        id,
+                        project_id,
+                        workspace_id,
+                        label,
+                        created_at,
+                        payload_json,
+                    }
+                },
+            )
+        })
+}
+
+// ─── Annotation commands ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnotationResponse {
+    pub id: String,
+    pub project_id: String,
+    pub node_id: String,
+    pub author: String,
+    pub kind: String,
+    pub text: String,
+    pub created_at: String,
+}
+
+#[tauri::command]
+pub fn add_comment(
+    project_id: String,
+    node_id: String,
+    author: String,
+    text: String,
+    kind: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<AnnotationResponse, String> {
+    let repo = ProjectRepository::new(&state.db);
+    let (id, project_id_out, node_id_out, author_out, kind_out, text_out, created_at) = repo
+        .add_comment(&project_id, &node_id, &author, &text, kind.as_deref())
+        .map_err(|e| e.to_string())?;
+    Ok(AnnotationResponse {
+        id,
+        project_id: project_id_out,
+        node_id: node_id_out,
+        author: author_out,
+        kind: kind_out,
+        text: text_out,
+        created_at,
+    })
+}
+
+#[tauri::command]
+pub fn list_comments(
+    project_id: String,
+    node_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<AnnotationResponse>, String> {
+    let repo = ProjectRepository::new(&state.db);
+    repo.list_comments(&project_id, node_id.as_deref())
+        .map_err(|e| e.to_string())
+        .map(|cs| {
+            cs.into_iter()
+                .map(|r| AnnotationResponse {
+                    id: r.0,
+                    project_id: r.1,
+                    node_id: r.2,
+                    author: r.3,
+                    kind: r.4,
+                    text: r.5,
+                    created_at: r.6,
+                })
+                .collect()
+        })
+}
+
+#[tauri::command]
+pub fn list_snapshots(
+    project_id: String,
+    workspace_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<SnapshotResponse>, String> {
+    let repo = ProjectRepository::new(&state.db);
+    repo.list_snapshots(&project_id, workspace_id.as_deref())
+        .map_err(|e| e.to_string())
+        .map(|snaps| {
+            snaps
+                .into_iter()
+                .map(
+                    |(id, project_id, workspace_id, label, created_at, payload_json): (
+                        String,
+                        String,
+                        Option<String>,
+                        String,
+                        String,
+                        Option<String>,
+                    )| SnapshotResponse {
+                        id,
+                        project_id,
+                        workspace_id,
+                        label,
+                        created_at,
+                        payload_json,
+                    },
+                )
+                .collect()
+        })
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HealthRecordResponse {
+    pub id: String,
+    pub recorded_at: String,
+    pub overall_score: f64,
+    pub coupling_score: f64,
+    pub complexity_score: f64,
+    pub cycle_count: i64,
+    pub hotspot_count: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HealthTimelineResponse {
+    pub records: Vec<HealthRecordResponse>,
+    pub project_id: String,
+    pub from: String,
+    pub to: String,
+}
+
+#[tauri::command]
+pub fn get_health_timeline(
+    project_id: String,
+    from: String,
+    to: String,
+    state: State<'_, AppState>,
+) -> Result<HealthTimelineResponse, String> {
+    let repo = ProjectRepository::new(&state.db);
+    repo.get_health_timeline(&project_id, &from, &to)
+        .map_err(|e| e.to_string())
+        .map(|rows| HealthTimelineResponse {
+            records: rows
+                .into_iter()
+                .map(
+                    |(
+                        id,
+                        recorded_at,
+                        overall_score,
+                        coupling_score,
+                        complexity_score,
+                        cycle_count,
+                        hotspot_count,
+                    ): (String, String, f64, f64, f64, i64, i64)| {
+                        HealthRecordResponse {
+                            id,
+                            recorded_at,
+                            overall_score,
+                            coupling_score,
+                            complexity_score,
+                            cycle_count,
+                            hotspot_count,
+                        }
+                    },
+                )
+                .collect(),
+            project_id,
+            from,
+            to,
+        })
+}
+
+// ========================================================================
+// H3 — Executive Summary + Diff + C4 Views
+// ========================================================================
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExecutiveSummaryResponse {
+    pub workspace_id: String,
+    pub total_projects: i64,
+    pub total_files: i64,
+    pub avg_health_score: Option<f64>,
+    pub trend: String,
+    pub top_hotspots: Vec<HotspotItem>,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HotspotItem {
+    pub node_id: String,
+    pub coupling_score: f64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SnapshotDiffResponse {
+    pub base_snapshot_id: String,
+    pub target_snapshot_id: String,
+    pub nodes_added: Vec<String>,
+    pub nodes_removed: Vec<String>,
+    pub nodes_modified: Vec<String>,
+    pub edges_added: Vec<String>,
+    pub edges_removed: Vec<String>,
+    pub coupling_delta: f64,
+    pub complexity_delta: f64,
+    pub cycles_delta: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct C4ViewResponse {
+    pub level: u8,
+    pub systems: Option<Vec<String>>,
+    pub containers: Option<Vec<String>>,
+    pub warning: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_executive_summary(
+    workspace_id: String,
+    state: State<'_, AppState>,
+) -> Result<ExecutiveSummaryResponse, String> {
+    let repo = ProjectRepository::new(&state.db);
+    repo.compute_executive_summary(&workspace_id)
+        .map_err(|e| e.to_string())
+        .map(|s| ExecutiveSummaryResponse {
+            workspace_id: s.workspace_id,
+            total_projects: s.total_projects,
+            total_files: s.total_files,
+            avg_health_score: s.avg_health_score,
+            trend: s.trend,
+            top_hotspots: s
+                .top_hotspots
+                .into_iter()
+                .map(|(node_id, coupling_score): (String, f64)| HotspotItem {
+                    node_id,
+                    coupling_score,
+                })
+                .collect(),
+            generated_at: s.generated_at,
+        })
+}
+
+#[tauri::command]
+pub fn compare_snapshots(
+    base_snapshot_id: String,
+    target_snapshot_id: String,
+    state: State<'_, AppState>,
+) -> Result<SnapshotDiffResponse, String> {
+    let repo = ProjectRepository::new(&state.db);
+    repo.compare_snapshots(&base_snapshot_id, &target_snapshot_id)
+        .map_err(|e| e.to_string())
+        .map(|d| SnapshotDiffResponse {
+            base_snapshot_id: d.base_snapshot_id,
+            target_snapshot_id: d.target_snapshot_id,
+            nodes_added: d.nodes_added,
+            nodes_removed: d.nodes_removed,
+            nodes_modified: d.nodes_modified,
+            edges_added: d.edges_added,
+            edges_removed: d.edges_removed,
+            coupling_delta: d.coupling_delta,
+            complexity_delta: d.complexity_delta,
+            cycles_delta: d.cycles_delta,
+        })
+}
+
+#[tauri::command]
+pub fn get_c4_view(
+    project_id: String,
+    level: u8,
+    state: State<'_, AppState>,
+) -> Result<C4ViewResponse, String> {
+    let repo = ProjectRepository::new(&state.db);
+    repo.get_c4_view(&project_id, level)
+        .map_err(|e| e.to_string())
+        .map(|v| C4ViewResponse {
+            level: v.level,
+            systems: v.systems,
+            containers: v.containers,
+            warning: v.warning,
+        })
 }

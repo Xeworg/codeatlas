@@ -1,18 +1,26 @@
 //! CodeAtlas — Tauri entry point
-//! Registers commands and starts the application.
+//! Library run() used by main binary.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use codeatlas_lib::commands::{self, AppState};
-use std::sync::Mutex;
+mod commands;
+pub mod logging;
 
-fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .init();
+use commands::AppState;
+use std::sync::Mutex;
+use tauri::Manager;
+
+pub fn run() {
+    // Initialize tracing. In dev builds this installs a per-execution
+    // non-blocking file writer at `<repo>/logs/dev-runs/codeatlas-dev-*.log`
+    // in addition to the existing stderr writer, so the agent/developer can
+    // inspect a readable execution log after a run. The dev default level is
+    // DEBUG unless `RUST_LOG` overrides it. Release builds keep the previous
+    // console-only INFO-default behavior.
+    //
+    // The guard (if returned) must live for the whole `run()` lifetime;
+    // dropping it flushes and stops the background log writer thread.
+    let _log_guard = logging::init_dev_file_logging(&logging::compile_time_repo_root());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -29,9 +37,8 @@ fn main() {
                 .expect("Failed to open database");
 
             db_pool.init_schema().ok();
-            // Apply any pending v2 migrations on every startup (idempotent).
             let migration_result = db_pool.with_connection(|conn| {
-                use codeatlas_lib::db::migrations::run_pending_migrations;
+                use engine::db::migrations::run_pending_migrations;
                 run_pending_migrations(conn)
             });
             if let Err(e) = migration_result {
@@ -46,7 +53,6 @@ fn main() {
             };
 
             app.manage(app_state);
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -54,6 +60,7 @@ fn main() {
             commands::get_scan_status,
             commands::get_graph,
             commands::get_node_details,
+            commands::get_node_outline,
             commands::search_nodes,
             commands::configure_ai,
             commands::get_ai_config,
@@ -63,6 +70,19 @@ fn main() {
             commands::get_impact_analysis,
             commands::get_graph_insights,
             commands::export_view,
+            commands::create_workspace,
+            commands::list_workspaces,
+            commands::attach_project_to_workspace,
+            commands::list_workspace_projects,
+            commands::create_snapshot,
+            commands::get_snapshot,
+            commands::list_snapshots,
+            commands::add_comment,
+            commands::list_comments,
+            commands::get_health_timeline,
+            commands::get_executive_summary,
+            commands::compare_snapshots,
+            commands::get_c4_view,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

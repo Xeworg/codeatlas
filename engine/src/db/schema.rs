@@ -70,6 +70,28 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
         CREATE INDEX IF NOT EXISTS idx_imports_source ON imports(source_file_id);
         CREATE INDEX IF NOT EXISTS idx_imports_target ON imports(target_file_id);
+
+        -- v3: Workspaces + Snapshots (also created via migration 004)
+        CREATE TABLE IF NOT EXISTS workspaces (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS workspace_projects (
+            workspace_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, project_id)
+        );
+        CREATE TABLE IF NOT EXISTS snapshots (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            workspace_id TEXT,
+            label TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            payload_json TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_snapshots_project ON snapshots(project_id);
+        CREATE INDEX IF NOT EXISTS idx_snapshots_workspace ON snapshots(workspace_id);
         "#,
     )?;
 

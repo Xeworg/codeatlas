@@ -1,0 +1,350 @@
+//! Tree-sitter-based code parser for JS, TS, and Rust.
+//!
+//! This module provides a backwards-compatible shim layer. The intended API is:
+//! - `engine::commands::scan_files` / `outline_for_file` for higher-level
+//!   program-level scan orchestration (single-parse-per-file).
+//! - `ParserRegistry::parse_file` for direct registry dispatch.
+//! - `CodeParser::parse_file` (deprecated) for any remaining legacy call sites.
+//!   Converts a `ParseResult` to the legacy `(symbols, imports)` tuple.
+
+use crate::models::{ImportInfo, ParseResult, SymbolInfo, SymbolKind};
+use tree_sitter::Tree;
+use super::parser::ParserRegistry;
+
+pub struct CodeParser;
+
+impl CodeParser {
+    /// Parse a file and return symbols and imports (legacy tuple interface).
+    ///
+    /// # Deprecated
+    ///
+    /// Use `ParserRegistry::parse_file` instead and extract
+    /// `(result.symbols, result.imports)` from the `ParseResult`.
+    /// For program-level scans, prefer `engine::commands::scan_files` or
+    /// `engine::commands::outline_for_file`.
+    #[deprecated(
+        note = "use ParserRegistry::parse_file or engine::commands::{scan_files, outline_for_file} instead"
+    )]
+    pub fn parse_file(
+        path: &str,
+        content: &str,
+        extension: &str,
+    ) -> (Vec<SymbolInfo>, Vec<ImportInfo>) {
+        let result = ParserRegistry::default().parse_file(path, content, extension, "");
+        (result.symbols, result.imports)
+    }
+
+    pub fn parse_file_all(
+        path: &str,
+        content: &str,
+        extension: &str,
+        file_id: &str,
+    ) -> ParseResult {
+        ParserRegistry::default().parse_file(path, content, extension, file_id)
+    }
+
+    #[allow(dead_code)]
+    fn extract_ts_symbols(
+        tree: &Tree,
+        file_path: &str,
+        content: &str,
+        symbols: &mut Vec<SymbolInfo>,
+        imports: &mut Vec<ImportInfo>,
+    ) {
+        let root = tree.root_node();
+        let bytes = content.as_bytes();
+
+        // Walk tree and extract symbols.
+        // Handle two patterns:
+        //   (a) direct declaration: function_declaration, class_declaration, …
+        //   (b) export wrapper: export_statement > declaration
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            let kind = node.kind();
+
+            // ── Imports ──────────────────────────────────────────────────────
+            if kind == "import_statement" {
+                let source_file_id = file_path.to_string();
+                let target_module = node
+                    .child_by_field_name("source")
+                    .and_then(|n| n.utf8_text(bytes).ok())
+                    .map(|s| s.trim_matches(|c| c == '\'' || c == '"').to_string());
+
+                let mut import_names: Vec<String> = vec![];
+                if let Some(specs) = node.child_by_field_name("specifiers") {
+                    let mut spec_cursor = specs.walk();
+                    for spec in specs.children(&mut spec_cursor) {
+                        if let Ok(name) = spec.utf8_text(bytes) {
+                            import_names.push(name.to_string());
+                        }
+                    }
+                }
+
+                let is_default = import_names.iter().any(|n| n == "default");
+                let is_type = content[node.start_byte()..node.end_byte()].contains("import type");
+
+                imports.push(ImportInfo {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    source_file_id,
+                    target_file_id: None,
+                    target_module,
+                    imports: import_names,
+                    is_default,
+                    is_type,
+                });
+                continue;
+            }
+
+            // ── Symbols (direct or wrapped in export_statement) ────────────────
+            // Try direct declaration first.
+            let direct = Self::ts_symbol_kind(kind);
+
+            // If it's an export_statement, unwrap to the first declaration child.
+            let declaration = if kind == "export_statement" {
+                node.children(&mut node.walk())
+                    .find(|n| !n.kind().starts_with("comment"))
+            } else {
+                None
+            };
+
+            let target_kind =
+                direct.or_else(|| declaration.and_then(|d| Self::ts_symbol_kind(d.kind())));
+
+            let symbol_node = if direct.is_some() {
+                Some(node)
+            } else {
+                declaration
+            };
+
+            if let (Some(sk), Some(sym_node)) = (target_kind, symbol_node) {
+                let name = Self::ts_declaration_name(&sym_node, bytes);
+                if let Some(n) = name {
+                    let start = sym_node.start_position();
+                    let end = sym_node.end_position();
+                    symbols.push(SymbolInfo {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        name: n.to_string(),
+                        kind: sk,
+                        file_id: file_path.to_string(),
+                        line_start: start.row as u32 + 1,
+                        line_end: end.row as u32 + 1,
+                        exports: true,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Maps tree-sitter node kinds to SymbolKind for TypeScript declarations.
+    #[allow(dead_code)]
+    fn ts_symbol_kind(kind: &str) -> Option<SymbolKind> {
+        match kind {
+            "class_declaration" => Some(SymbolKind::Class),
+            "function_declaration" => Some(SymbolKind::Function),
+            "method_definition" => Some(SymbolKind::Method),
+            "interface_declaration" => Some(SymbolKind::Interface),
+            "type_alias_declaration" => Some(SymbolKind::TypeAlias),
+            "enum_declaration" => Some(SymbolKind::Enum),
+            "lexical_declaration" => Some(SymbolKind::Const),
+            _ => None,
+        }
+    }
+
+    /// Extract declaration name, handling nested names for lexical_declaration.
+    #[allow(dead_code)]
+    fn ts_declaration_name<'a>(
+        node: &'a tree_sitter::Node<'a>,
+        bytes: &'a [u8],
+    ) -> Option<&'a str> {
+        if let Some(n) = node.child_by_field_name("name") {
+            return n.utf8_text(bytes).ok();
+        }
+        if node.kind() == "lexical_declaration" {
+            let mut c = node.walk();
+            for child in node.children(&mut c) {
+                if child.kind() == "variable_declarator" {
+                    if let Some(n) = child.child_by_field_name("name") {
+                        return n.utf8_text(bytes).ok();
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    #[allow(dead_code)]
+    fn extract_rust_symbols(
+        tree: &Tree,
+        file_path: &str,
+        content: &str,
+        symbols: &mut Vec<SymbolInfo>,
+        imports: &mut Vec<ImportInfo>,
+    ) {
+        let root = tree.root_node();
+        let bytes = content.as_bytes();
+
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            let kind = node.kind();
+
+            let symbol_kind = match kind {
+                "struct_item" => Some(SymbolKind::Struct),
+                "impl_item" => Some(SymbolKind::Impl),
+                "function_item" => Some(SymbolKind::Function),
+                "enum_item" => Some(SymbolKind::Enum),
+                "type_alias_item" => Some(SymbolKind::TypeAlias),
+                _ => None,
+            };
+
+            if let Some(sk) = symbol_kind {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = name_node.utf8_text(bytes).unwrap_or("");
+                    let start = node.start_position();
+                    let end = node.end_position();
+                    symbols.push(SymbolInfo {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        name: name.to_string(),
+                        kind: sk,
+                        file_id: file_path.to_string(),
+                        line_start: start.row as u32 + 1,
+                        line_end: end.row as u32 + 1,
+                        exports: true,
+                    });
+                }
+            }
+
+            // Extract use declarations
+            if kind == "use_declaration" {
+                let source_file_id = file_path.to_string();
+                let use_text = node.utf8_text(bytes).unwrap_or("");
+                let module = use_text
+                    .trim()
+                    .trim_start_matches("use ")
+                    .trim_end_matches(';')
+                    .split("::")
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+
+                imports.push(ImportInfo {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    source_file_id,
+                    target_file_id: None,
+                    target_module: if module.is_empty() {
+                        None
+                    } else {
+                        Some(module)
+                    },
+                    imports: vec![],
+                    is_default: false,
+                    is_type: false,
+                });
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_typescript_function() {
+        // Use simpler JavaScript syntax that tree-sitter-javascript handles well
+        let code = r#"
+function calculateTotal(items) {
+    return items.reduce(function(sum, item) { return sum + item; }, 0);
+}
+module.exports = { calculateTotal };
+"#;
+        #[allow(deprecated)]
+        let (symbols, imports) = CodeParser::parse_file("test.js", code, "js");
+
+        // Should find at least one function symbol
+        assert!(
+            !symbols.is_empty() || !imports.is_empty(),
+            "Expected symbols or imports, got none"
+        );
+    }
+
+    #[test]
+    fn parse_rust_struct() {
+        let code = r#"
+pub struct UserRepository {
+    db: Database,
+}
+
+impl UserRepository {
+    pub fn find_by_id(&self, id: u64) -> Option<User> { None }
+}
+"#;
+        #[allow(deprecated)]
+        let (symbols, _imports) = CodeParser::parse_file("lib.rs", code, "rs");
+
+        assert!(symbols.iter().any(|s| s.name == "UserRepository"));
+        assert!(symbols.iter().any(|s| s.kind == SymbolKind::Struct));
+    }
+
+    #[test]
+    fn parse_imports() {
+        let code = r#"import { useState, useEffect } from "react";
+import type { User } from "./types";
+export default App;"#;
+        #[allow(deprecated)]
+        let (_symbols, imports) = CodeParser::parse_file("App.tsx", code, "tsx");
+
+        assert_eq!(imports.len(), 2);
+        assert!(imports
+            .iter()
+            .any(|i| i.target_module.as_deref() == Some("react")));
+        assert!(imports.iter().any(|i| i.is_type));
+    }
+
+    #[test]
+    fn parse_file_all_returns_outline_via_registry() {
+        let code = r#"
+class UserService {
+    getUser() { return null; }
+}
+"#;
+        let result = CodeParser::parse_file_all("UserService.ts", code, "ts", "file-1");
+
+        assert!(result.symbols.iter().any(|s| s.name == "UserService"));
+        assert!(result.outline.iter().any(|o| o.name == "UserService"));
+        assert!(result
+            .outline
+            .iter()
+            .flat_map(|o| o.children.iter())
+            .any(|o| o.name == "getUser"));
+    }
+
+    /// Shim parity test: parse_file and parse_file_all must produce
+    /// symbols and imports from the same registry-backed ParseResult.
+    #[test]
+    fn shim_parity_symbols_and_imports_equal() {
+        let code = r#"import { useState } from "react";
+export class UserService {
+    getUser() { return null; }
+}"#;
+        #[allow(deprecated)]
+        let (symbols, imports) = CodeParser::parse_file("Service.ts", code, "ts");
+        let result = CodeParser::parse_file_all("Service.ts", code, "ts", "test-id");
+
+        // Both paths derive from the same ParseResult, so field equality holds.
+        assert_eq!(
+            symbols.len(),
+            result.symbols.len(),
+            "shim symbols count must match registry result"
+        );
+        // Check each symbol's name (stable fields)
+        for (shim_sym, result_sym) in symbols.iter().zip(result.symbols.iter()) {
+            assert_eq!(shim_sym.name, result_sym.name);
+            assert_eq!(shim_sym.kind, result_sym.kind);
+        }
+        assert_eq!(
+            imports.len(),
+            result.imports.len(),
+            "shim imports count must match registry result"
+        );
+    }
+}

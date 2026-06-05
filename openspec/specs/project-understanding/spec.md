@@ -263,3 +263,280 @@ The system MUST reject v3 collaboration and multi-project capabilities from v2 i
 - WHEN evaluated for v2 inclusion
 - THEN the feature MUST be marked out of scope for v2
 - AND implementation planning MUST defer it to the v3 change set
+
+## v3 Additions — v3-collaboration-platform (archived 2026-06-01)
+
+### Requirement: H1 Hardening Gates from v2 Carry-Over
+
+Before closing H1, the system MUST complete and verify all three carry-over gates inherited from archived v2 exceptions.
+
+#### Scenario: Gate 1 — Real fixture and NFR benchmark evidence
+
+- GIVEN v3 H1 is in progress
+- WHEN NFR validation is executed
+- THEN the system MUST run benchmarks on a real fixture of 1000+ files
+- AND the system MUST record measurable evidence for scan, graph insights, and export timing against declared thresholds
+
+#### Scenario: Gate 2 — Remaining degraded-mode frontend/IA scenarios
+
+- GIVEN degraded-mode validation for v2/v3 compatibility
+- WHEN test suites run
+- THEN the system MUST cover pending frontend/IA scenarios: PNG fallback via mock, contract mismatch handling, AI not configured, and AI timeout
+- AND each scenario MUST verify non-crashing fallback behavior and user-visible error/warning states
+
+#### Scenario: Gate 3 — App-level wiring T5.6
+
+- GIVEN analytical components are wire-ready
+- WHEN H1 is completed
+- THEN `App.tsx` MUST integrate `AnalyticsViewSelector`, `ArchitectureCard`, `ImpactPanel`, and `InsightsPanel`
+- AND users MUST be able to reach those views through the main app flow without manual patching
+
+### Requirement: H1 Multi-Project Workspaces Foundation
+
+The system MUST support workspace-level organization for multiple projects in v3 H1.
+
+#### Scenario: Workspace groups projects
+
+- GIVEN a user with more than one scanned project
+- WHEN the user manages workspace context
+- THEN the system MUST allow associating projects to a workspace boundary
+- AND project-level analysis data MUST remain isolated per project identity
+
+### Requirement: H2 Collaboration Baseline
+
+The system MUST provide local-first collaboration primitives in v3 H2 through snapshots and annotations.
+
+#### Scenario: Snapshot creation and retrieval
+
+- GIVEN an analyzed project state
+- WHEN the user creates a snapshot with a label
+- THEN the system MUST persist a snapshot artifact that can be listed and reloaded later
+
+#### Scenario: Node annotations are persisted
+
+- GIVEN a graph node in a project context
+- WHEN the user adds a comment/annotation
+- THEN the system MUST persist the annotation with author and timestamp metadata
+- AND the annotation MUST be retrievable in later sessions
+
+### Requirement: H3 Executive Insight Surfaces
+
+The system MUST provide executive-level views in v3 H3 with health timeline and architecture comparison outputs.
+
+#### Scenario: Health timeline is available by period
+
+- GIVEN historical health records for a project or workspace
+- WHEN the user requests a time window
+- THEN the system MUST return a timeline including overall and component architecture health metrics
+
+#### Scenario: Comparative architecture view
+
+- GIVEN at least two snapshots
+- WHEN the user requests a comparison
+- THEN the system MUST return a diff-capable representation suitable for C4-assisted and snapshot comparison views
+
+### Requirement: V3 Contract and Migration Consistency
+
+The system MUST keep v3 contracts and migrations consistent with documented plans while preserving additive compatibility with v1/v2 data.
+
+#### Scenario: Planned contracts are exposed without v1/v2 breakage
+
+- GIVEN a v3-capable client
+- WHEN it invokes v3 collaboration/executive commands
+- THEN responses MUST match documented v3 contract families (`Snapshot`, `Comment`, `SharedView`, `HealthScoreTimeline`, `ExecutiveArchitectureSummary`)
+- AND existing v1/v2 command flows MUST remain functional without required breaking renames/removals
+
+#### Scenario: Planned migrations are additive and recoverable
+
+- GIVEN a database containing v1/v2 data
+- WHEN migrations `004_workspace_and_snapshots.sql`, `005_collaboration_annotations.sql`, and `006_health_timeline.sql` are applied
+- THEN schema changes MUST be additive
+- AND rollback/recovery MUST remain possible via documented backup procedure
+
+### Requirement: V3 Scope Protection and Non-Goals
+
+The system SHALL enforce v3 non-goals to prevent scope creep during execution.
+
+#### Scenario: Out-of-scope request appears during v3
+
+- GIVEN a request for cloud multi-tenant realtime sync, full CRDT/distributed conflict resolution, or unrelated v4 capability
+- WHEN evaluated for inclusion in `v3-collaboration-platform`
+- THEN the request MUST be marked out of scope
+- AND planning MUST defer it to a future approved change
+
+## Logging & Observability Additions — robust-logging-observability (synced 2026-06-03)
+
+> Cross-cutting extension to v3 covering frontend error normalization, backend structured logging at scan lifecycle and graph build boundaries, dev per-execution file logging, and `RUST_LOG`-controlled verbosity. Purely additive: no v1/v2/v3 requirements above are modified or removed by this section.
+
+### Requirement: Frontend error normalization
+
+The system MUST ensure that errors thrown from any Tauri invoke call never render as `[object Object]` in the UI.
+
+**Rationale:** `toApiError()` returns a plain `{ code, message }` object. When `catch (err)` in `App.tsx` or other components calls `setError(err)` and later renders `String(err)`, the result is `[object Object]` because plain objects don't have a useful `toString()`.
+
+#### Scenario: API error is rendered safely
+
+- GIVEN the user triggers a scan on a non-existent path
+- WHEN the backend returns a Tauri error string or the frontend `catch (err)` block executes
+- THEN the error displayed to the user MUST be a human-readable string (either `err.message`, `err.code + " — " + err.message`, or a known-error-label)
+- AND the display MUST NOT contain the literal text `[object Object]`
+
+#### Scenario: Non-Error thrown is handled gracefully
+
+- GIVEN a Tauri invoke throws a non-`Error` value (e.g., a plain object `{ code: "INTERNAL", message: "..." }`)
+- WHEN `getErrorMessage(err)` is called
+- THEN the returned string MUST be the `.message` field if present, otherwise a fallback label (e.g., `"Unknown error"`)
+- AND the code MUST NOT call `String(err)` directly on the raw caught value
+
+### Requirement: Tauri API error shape contract
+
+The system MUST expose a `getErrorMessage(err: unknown): string` helper in `src/lib/tauri-api.ts` that handles all thrown shapes returned by the backend.
+
+**This does not change the backend contract.** The `{ code, message }` shape returned from `toApiError()` is preserved for code-detection logic. The helper only ensures safe message extraction for UI rendering.
+
+#### Scenario: Error with `message` property is extracted
+
+- GIVEN `err` is `{ code: "PATH_NOT_FOUND", message: "Path /foo not found" }`
+- WHEN `getErrorMessage(err)` is called
+- THEN the returned string MUST be `"PATH_NOT_FOUND — Path /foo not found"` or `"Path /foo not found"`
+
+#### Scenario: Error without `message` property is handled
+
+- GIVEN `err` is a primitive `"Connection refused"` or a non-standard object `{ reason: "..." }`
+- WHEN `getErrorMessage(err)` is called
+- THEN the returned string MUST be `"Connection refused"` or `"Unknown error"`, respectively
+- AND no exception is thrown
+
+### Requirement: Backend structured logging at scan lifecycle boundaries
+
+The system MUST emit structured `tracing` log entries with consistent fields at the following scan lifecycle boundaries:
+
+- **Scan start:** `INFO` level with `project_id`, `root_path`, `files_discovered`
+- **Scan completion:** `INFO` level with `project_id`, `files_persisted`, `symbols_count`, `imports_count`, `duration_ms`
+- **Scan error:** `ERROR` level with `project_id`, `root_path`, `error_detail`
+
+#### Scenario: Successful scan emits lifecycle logs
+
+- GIVEN the user triggers a scan on a valid project
+- WHEN the scan completes successfully
+- THEN the backend MUST emit at least two `INFO` log entries: one for scan start (with `files_discovered` count) and one for scan completion (with final counts and `duration_ms`)
+- AND no `[object Object]` or raw panic strings appear in the log output
+
+#### Scenario: Failed scan emits error log with context
+
+- GIVEN the user triggers a scan on a valid project
+- WHEN `repo.save_scan_result()` fails and returns `Err`
+- THEN the backend MUST emit an `ERROR` (not `DEBUG`) log entry that includes `root_path` and a human-readable `error_detail`
+- AND the command MUST still return the error string to the frontend (no silent swallow)
+
+### Requirement: Backend DB persistence error logging
+
+The system MUST emit structured `tracing::debug` logs when individual DB persistence operations fail within a scan, so that degraded scans can be diagnosed without flooding INFO-level logs.
+
+#### Scenario: Import persistence failure is debug-logged
+
+- GIVEN the scan is processing import edges
+- WHEN `repo.save_import(imp)` returns `Err(e)` for a specific import
+- THEN the backend MUST emit a `DEBUG` log containing the import's `source_file_id`, `target_module`, and the error string
+- AND the scan MUST continue processing remaining imports
+- AND the final scan result MUST reflect the degraded state (`imports_count` reflects only persisted imports, `error` field is set)
+
+#### Scenario: Outline persistence failure is debug-logged
+
+- GIVEN the scan is processing outline items for a file
+- WHEN `repo.save_outline_items()` returns `Err(e)`
+- THEN the backend MUST emit a `DEBUG` log containing the `file_id` and error string
+- AND the scan MUST continue processing remaining files
+
+**Noise policy:** These debug logs are emitted per-failure, which could be thousands in a degraded scan. They MUST be gated behind `RUST_LOG=debug`. Default `RUST_LOG=info` MUST NOT show per-file/per-import failure logs.
+
+### Requirement: Backend graph build logging
+
+The system MUST emit structured `tracing` logs around graph construction.
+
+#### Scenario: Graph cache hit
+
+- GIVEN `get_graph` is called with a `project_id` that has a cached graph
+- WHEN the cached graph is found and returned
+- THEN the backend MUST emit an `INFO` log with `project_id`, `cache_hit: true`, and `elapsed_ms`
+
+#### Scenario: Graph cache miss and fresh build
+
+- GIVEN `get_graph` is called with a `project_id` that has no cached graph
+- WHEN the graph is built fresh from DB
+- THEN the backend MUST emit an `INFO` log with `project_id`, `cache_hit: false`, `nodes_count`, `edges_count`, `imports_considered`, and `elapsed_ms`
+
+#### Scenario: Graph build with no files
+
+- GIVEN `get_graph` is called with a `project_id` that exists in DB but has no files
+- WHEN the builder returns an empty graph
+- THEN the backend MUST emit a `WARN` log with `project_id` indicating no files were found
+- AND the command MUST return an error to the frontend (not an empty graph with a 200 OK)
+
+### Requirement: `projects.root_path` conflict logging
+
+The system MUST log structured context when a `projects.root_path` UNIQUE constraint violation occurs, so that developers can identify which conflicting path caused the failure.
+
+#### Scenario: Duplicate root_path conflict
+
+- GIVEN a scan is initiated on a path that already exists in the `projects` table
+- WHEN `repo.save_scan_result()` catches a DB constraint error for `root_path`
+- THEN the backend MUST emit a `WARN` (not `DEBUG`) log containing the conflicting `root_path` value and the constraint error detail
+- AND the frontend MUST receive an error message that references `root_path` conflict (e.g., `"Project already exists at path: {root_path}"` rather than a raw SQLite error code)
+
+**Note:** This may require catching the SQLite error in `save_scan_result` or the command layer and re-mapping it. The raw SQLite error (e.g., `UNIQUE constraint failed: projects.root_path`) MUST NOT propagate directly to the frontend.
+
+### Requirement: Log level configuration via `RUST_LOG`
+
+The system MUST support `RUST_LOG` environment variable to control log verbosity, with `INFO` as the default.
+
+- `RUST_LOG=info` (default): Shows `INFO`, `WARN`, `ERROR` logs; suppresses `DEBUG` logs.
+- `RUST_LOG=debug`: Shows `DEBUG`, `INFO`, `WARN`, `ERROR` logs including parser-miss and per-failure persistence logs.
+- `RUST_LOG=warn`: Shows only `WARN`, `ERROR` logs; suppresses `INFO` and `DEBUG`.
+
+#### Scenario: Default log level is INFO
+
+- GIVEN no `RUST_LOG` is set
+- WHEN the backend starts
+- THEN the tracing subscriber MUST be initialized so that only `INFO`, `WARN`, and `ERROR` messages are printed
+- AND `DEBUG` messages MUST be suppressed
+
+#### Scenario: Debug level enables parser miss logging
+
+- GIVEN `RUST_LOG=debug` is set
+- WHEN `CodeParser` encounters a file it cannot parse or a language variant it doesn't handle
+- THEN the backend MAY emit a `DEBUG` log describing the parser miss (e.g., `"Unsupported syntax in {file_path}: {reason}"`)
+- AND this logging MUST NOT appear in default (INFO) mode
+
+### Requirement: Command error returns preserve human-readable context
+
+The system MUST ensure that any `String` returned as a `Result<_, String>` error from a Tauri command contains a human-readable message, not a raw SQLite error code, Rust enum variant, or debug output.
+
+#### Scenario: Database error is mapped to user-facing message
+
+- GIVEN a DB operation (save, query, migration) fails with an error
+- WHEN the error propagates to a Tauri command return
+- THEN the returned `String` MUST be derived from `e.to_string()` where `e` is a meaningful error type (e.g., `rusqlite::Error`, custom error enum with Display impl), not a debug-format struct
+- AND the string MUST NOT include internal field names like `Error { code: ...` unless those fields are intentionally user-facing
+
+**Risk flag:** Changing error formatting in `commands.rs` `map_err(|e| e.to_string())` across many commands could affect existing error handling. This change should be applied surgically per command, with test coverage.
+
+### Requirement: Optional debug parser miss logging (out of scope for Tree-sitter adaptation)
+
+The system MAY emit debug-level logs when a Tree-sitter parser fails to recognize a syntax construct, provided the log is behind the `RUST_LOG=debug` gate and does not include source code snippets.
+
+**Note:** This requirement covers Phase 1 debug logging only. Tree-sitter parser improvements (Phase 2) are out of scope and will be handled in a separate change spec.
+
+#### Scenario: Parser miss in debug mode
+
+- GIVEN `RUST_LOG=debug` is set
+- WHEN `CodeParser::parse_file` encounters a TSX file with a method-like form it cannot categorize
+- THEN the backend MAY log at `DEBUG` level: `"Parser miss: file={path} reason=\"unhandled syntax kind: {kind}\""`
+- AND the log MUST NOT include the file's source code content
+
+#### Scenario: Parser miss in default mode is silent
+
+- GIVEN `RUST_LOG=info` (default) is set
+- WHEN `CodeParser::parse_file` encounters an unrecognized syntax construct
+- THEN no log MUST be emitted for this event
+- AND the parse MUST continue or gracefully degrade without error

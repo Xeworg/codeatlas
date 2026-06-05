@@ -18,6 +18,33 @@ export type SymbolKind =
   | 'impl'
   | 'unknown'
 
+export type OutlineItemKind =
+  | 'class'
+  | 'function'
+  | 'method'
+  | 'interface'
+  | 'type'
+  | 'enum'
+  | 'const'
+  | 'variable'
+  | 'module'
+  | 'field'
+  | 'struct'
+  | 'impl'
+  | 'unknown'
+
+export interface OutlineItem {
+  id: string
+  fileId: string
+  name: string
+  kind: OutlineItemKind
+  lineStart: number
+  lineEnd: number
+  columnStart?: number | null
+  columnEnd?: number | null
+  children?: OutlineItem[]
+}
+
 export type NodeType =
   | 'component'
   | 'route'
@@ -34,9 +61,9 @@ export interface SymbolInfo {
   id: string
   name: string
   kind: SymbolKind
-  file_id: string
-  line_start: number
-  line_end: number
+  fileId: string
+  lineStart: number
+  lineEnd: number
   exports: boolean
 }
 
@@ -51,23 +78,23 @@ export interface FileInfo {
 
 export interface ImportInfo {
   id: string
-  source_file_id: string
-  target_file_id: string | null
-  target_module: string | null
+  sourceFileId: string
+  targetFileId: string | null
+  targetModule: string | null
   imports: string[]
-  is_default: boolean
-  is_type: boolean
+  isDefault: boolean
+  isType: boolean
 }
 
 export interface ScanResult {
-  project_id: string
-  project_name: string
-  root_path: string
-  files_count: number
-  symbols_count: number
-  imports_count: number
+  projectId: string
+  projectName: string
+  rootPath: string
+  filesCount: number
+  symbolsCount: number
+  importsCount: number
   files: FileInfo[]
-  scan_duration_ms: number
+  scanDurationMs: number
   status: ScanStatus
   error?: string
 }
@@ -77,7 +104,7 @@ export interface GraphNode {
   label: string
   path: string
   type: NodeType
-  symbol_count: number
+  symbolCount: number
   position?: { x: number; y: number }
 }
 
@@ -91,8 +118,8 @@ export interface GraphEdge {
 export interface GraphData {
   nodes: GraphNode[]
   edges: GraphEdge[]
-  project_id: string
-  generated_at: string
+  projectId: string
+  generatedAt: string
 }
 
 export interface NodeExplanation {
