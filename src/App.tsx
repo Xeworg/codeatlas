@@ -1,10 +1,10 @@
 // App — main entry, wires all panels together
-// PR2 (v3): integrates AnalyticsViewSelector, ArchitectureCard, ImpactPanel, InsightsPanel
-// Gate T5.6: components wire-ready since v2, now fully integrated into main flow
+// Layout pass: assistant/AI moved to right panel; main stack simplified
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
-import { FileText, Bot, MessageSquare, Zap, FolderOpen, HelpCircle } from 'lucide-react'
+import { t } from './lib/i18n'
+import { FileText, Zap, FolderOpen, HelpCircle } from 'lucide-react'
 import { AppShell } from './components/layout/AppShell'
 import { Sidebar } from './components/layout/Sidebar'
 import { EmptyState } from './components/common/EmptyState'
@@ -16,12 +16,7 @@ import { SearchOverlay } from './components/graph/SearchOverlay'
 import { DetailPanel } from './components/panel/DetailPanel'
 import { AIExplanation } from './components/panel/AIExplanation'
 import { ChatPanel } from './components/chat/ChatPanel'
-import {
-  AnalyticsViewSelector,
-  ArchitectureCard,
-  ImpactPanel,
-  InsightsPanel,
-} from './components/analytics'
+import { AnalyticsViewSelector, ArchitectureCard, ImpactPanel } from './components/analytics'
 import { useProjectStore, useScanStatus } from './stores/projectStore'
 import { useGraphStore, useSelectedNodeId } from './stores/graphStore'
 import {
@@ -31,18 +26,12 @@ import {
   getErrorMessage,
   getArchitectureDetection,
   getImpactAnalysis,
-  getGraphInsights,
 } from './lib/tauri-api'
 import { buildLayout } from './lib/graph-layout'
 import { V3_H1_ENABLED } from './stores/featureFlags'
-import type {
-  ArchitectureDetectionResult,
-  ImpactAnalysisResult,
-  GraphInsights,
-  ScanResult,
-} from './lib/types'
+import type { ArchitectureDetectionResult, ImpactAnalysisResult, ScanResult } from './lib/types'
 
-type DetailTab = 'details' | 'ai' | 'chat' | 'impact'
+type DetailTab = 'details' | 'impact'
 
 interface DetailTabDef {
   id: DetailTab
@@ -51,9 +40,7 @@ interface DetailTabDef {
 }
 
 const V2_DETAIL_TABS: DetailTabDef[] = [
-  { id: 'details', label: 'Detalles', icon: <FileText size={14} strokeWidth={1.75} /> },
-  { id: 'ai', label: 'IA', icon: <Bot size={14} strokeWidth={1.75} /> },
-  { id: 'chat', label: 'Chat', icon: <MessageSquare size={14} strokeWidth={1.75} /> },
+  { id: 'details', label: t('tabs.summary'), icon: <FileText size={14} strokeWidth={1.75} /> },
 ]
 
 function App() {
@@ -67,16 +54,15 @@ function App() {
   const [scanStartTime, setScanStartTime] = useState<number | null>(null)
   const [detailTab, setDetailTab] = useState<DetailTab>('details')
 
-  // ── PR2 analytics state ────────────────────────────────────────────────
+  // ── Analytics state ────────────────────────────────────────────────────
   const [architectureDetection, setArchitectureDetection] =
     useState<ArchitectureDetectionResult | null>(null)
   const [impactAnalysis, setImpactAnalysis] = useState<ImpactAnalysisResult | null>(null)
-  const [graphInsights, setGraphInsights] = useState<GraphInsights | null>(null)
 
   // Track previous projectId to re-fetch analytics on project change
   const prevProjectId = useRef<string | null>(null)
 
-  // ── T2.2: Fetch architecture detection when project is ready ─────────────
+  // ── Fetch architecture detection when project is ready ─────────────────
   useEffect(() => {
     if (!V3_H1_ENABLED) return
     if (status !== 'ready' || !projectId) return
@@ -89,18 +75,7 @@ function App() {
       .catch(() => setArchitectureDetection(null))
   }, [status, projectId])
 
-  // ── T2.2: Fetch graph insights when project is ready ────────────────────
-  useEffect(() => {
-    if (!V3_H1_ENABLED) return
-    if (status !== 'ready' || !projectId) return
-
-    setGraphInsights(null)
-    getGraphInsights(projectId)
-      .then(setGraphInsights)
-      .catch(() => setGraphInsights(null))
-  }, [status, projectId])
-
-  // ── T2.3: Fetch impact analysis when node is selected ───────────────────
+  // ── Fetch impact analysis when node is selected ────────────────────────
   useEffect(() => {
     if (!V3_H1_ENABLED) return
     if (status !== 'ready' || !projectId || !selectedNodeId) {
@@ -114,19 +89,12 @@ function App() {
       .catch(() => setImpactAnalysis(null))
   }, [status, projectId, selectedNodeId])
 
-  // Auto-select Impact tab when impact analysis arrives and a node is selected
+  // Auto-select Impact tab when impact analysis arrives
   useEffect(() => {
     if (impactAnalysis && selectedNodeId && V3_H1_ENABLED) {
       setDetailTab('impact')
     }
   }, [impactAnalysis, selectedNodeId])
-
-  // Auto-select AI tab when a node is selected (v2 behavior, preserved)
-  useEffect(() => {
-    if (selectedNodeId && status === 'ready' && detailTab === 'details') {
-      // Only switch if not already in a non-details tab to avoid hijacking
-    }
-  }, [selectedNodeId, status])
 
   const handleOpenProject = useCallback(async () => {
     try {
@@ -139,7 +107,6 @@ function App() {
       // Reset analytics state for new/reopened project
       setArchitectureDetection(null)
       setImpactAnalysis(null)
-      setGraphInsights(null)
       prevProjectId.current = null
       setLoading(true)
       setScanStartTime(Date.now())
@@ -149,8 +116,6 @@ function App() {
       try {
         reopenResult = await openProjectByPath(path)
       } catch (reopenErr) {
-        // Path is not in DB — fall through to fresh scan below.
-        // Only the explicit "not found in DB" case should continue to a fresh scan.
         const reopenErrMsg = getErrorMessage(reopenErr)
         if (!reopenErrMsg.includes('No project found')) {
           setError(reopenErrMsg)
@@ -192,7 +157,6 @@ function App() {
       setScanResult(result)
       setStatus(result.status)
 
-      // Promote canonical backend project id for all subsequent hooks/commands
       if (result.projectId) {
         setProject(result.projectId, result.projectName || name, result.rootPath || path)
       }
@@ -238,30 +202,7 @@ function App() {
       return <ImpactPanel impact={impactAnalysis} />
     }
 
-    switch (detailTab) {
-      case 'ai':
-        return (
-          <AIExplanation
-            nodeId={selectedNodeId}
-            projectId={projectId}
-            nodeLabel={
-              selectedNodeId
-                ? graphData?.nodes.find((n) => n.id === selectedNodeId)?.label
-                : undefined
-            }
-          />
-        )
-      case 'chat':
-        return (
-          <ChatPanel
-            projectId={projectId}
-            contextNodeIds={selectedNodeId ? [selectedNodeId] : []}
-          />
-        )
-      case 'details':
-      default:
-        return <DetailPanel />
-    }
+    return <DetailPanel />
   }
 
   const detailTabs = V3_H1_ENABLED
@@ -269,22 +210,49 @@ function App() {
         ...V2_DETAIL_TABS,
         {
           id: 'impact' as DetailTab,
-          label: 'Impacto',
+          label: t('tabs.impact'),
           icon: <Zap size={14} strokeWidth={1.75} />,
         },
       ]
     : V2_DETAIL_TABS
 
+  // ── Right panel: persistent assistant + AI explanation + architecture card
+  // ChatPanel gets its own scroll viewport so long history does not push other cards off-screen.
+  const rightPanel =
+    status === 'ready' ? (
+      <div className="flex flex-col h-full overflow-y-auto">
+        <div className="h-[55vh] flex flex-col overflow-hidden flex-shrink-0">
+          <ChatPanel
+            projectId={projectId}
+            contextNodeIds={selectedNodeId ? [selectedNodeId] : []}
+          />
+        </div>
+        {selectedNodeId && (
+          <AIExplanation
+            nodeId={selectedNodeId}
+            projectId={projectId}
+            nodeLabel={graphData?.nodes.find((n) => n.id === selectedNodeId)?.label}
+          />
+        )}
+        {V3_H1_ENABLED && architectureDetection && (
+          <ArchitectureCard detection={architectureDetection} />
+        )}
+      </div>
+    ) : undefined
+
   const mainContent = () => {
-    if (error) return <ErrorState message={error} onRetry={handleOpenProject} actionLabel="Retry" />
+    if (error)
+      return (
+        <ErrorState message={error} onRetry={handleOpenProject} actionLabel={t('common.retry')} />
+      )
 
     if (status === 'idle') {
       return (
         <EmptyState
           icon={<FolderOpen size={24} strokeWidth={1.5} />}
-          title="No project"
-          description="Open a project to explore its architecture"
-          action={{ label: 'Open project', onClick: handleOpenProject }}
+          title={t('app.emptyProjectTitle')}
+          description={t('app.emptyProjectDescription')}
+          action={{ label: t('app.openProjectAction'), onClick: handleOpenProject }}
         />
       )
     }
@@ -295,7 +263,7 @@ function App() {
           <div className="text-center">
             <Spinner size="lg" />
             <p className="mt-3 text-sm text-text-muted">
-              {status === 'scanning' ? 'Scanning files…' : 'Building graph…'}
+              {status === 'scanning' ? t('app.scanningFiles') : t('app.buildingGraph')}
             </p>
           </div>
         </div>
@@ -305,22 +273,8 @@ function App() {
     if (status === 'ready') {
       return (
         <div className="flex flex-col h-full overflow-hidden">
-          {/* T2.1: AnalyticsViewSelector toolbar — only when v3_h1 enabled */}
+          {/* Analytics tabs toolbar */}
           {V3_H1_ENABLED && <AnalyticsViewSelector />}
-
-          {/* T2.2: ArchitectureCard — shown when detection is available */}
-          {V3_H1_ENABLED && architectureDetection && (
-            <div className="px-4 py-2 bg-surface-base border-b border-border-subtle flex-shrink-0">
-              <ArchitectureCard detection={architectureDetection} />
-            </div>
-          )}
-
-          {/* T2.4: InsightsPanel — shown below graph when insights are available */}
-          {V3_H1_ENABLED && graphInsights ? (
-            <div className="h-52 border-t border-border-subtle flex-shrink-0 flex flex-col overflow-hidden bg-surface-base">
-              <InsightsPanel insights={graphInsights} />
-            </div>
-          ) : null}
 
           {/* Main graph area */}
           <div className="flex-1 relative overflow-hidden">
@@ -328,7 +282,7 @@ function App() {
             <SearchOverlay />
           </div>
 
-          {/* Detail panel — tabs include Impact when v3_h1 */}
+          {/* Detail panel */}
           {selectedNodeId && (
             <div className="h-72 border-t border-border-subtle overflow-hidden flex-shrink-0 flex flex-col bg-surface-base">
               <TabSwitcher
@@ -343,7 +297,9 @@ function App() {
       )
     }
 
-    return <EmptyState icon={<HelpCircle size={24} strokeWidth={1.5} />} title="Unknown state" />
+    return (
+      <EmptyState icon={<HelpCircle size={24} strokeWidth={1.5} />} title={t('app.unknownState')} />
+    )
   }
 
   const scanDuration = scanStartTime ? Date.now() - scanStartTime : null
@@ -363,6 +319,7 @@ function App() {
           onSearch={(_q) => {}}
         />
       }
+      rightPanel={rightPanel}
     >
       {mainContent()}
     </AppShell>

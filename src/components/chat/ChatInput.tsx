@@ -2,7 +2,7 @@
 // Part of PR5b (AI UI)
 
 import { useState } from 'react'
-import { Sparkles } from 'lucide-react'
+import { Send } from 'lucide-react'
 
 interface ChatInputProps {
   onSend: (message: string) => void
@@ -10,7 +10,9 @@ interface ChatInputProps {
   placeholder?: string
 }
 
-const DEFAULT_PLACEHOLDER = 'Escribí tu pregunta sobre el proyecto...'
+import { t } from '../../lib/i18n'
+
+const DEFAULT_PLACEHOLDER = t('chat.inputPlaceholder')
 
 const SUGGESTIONS = [
   '¿Qué archivos están relacionados con Auth?',
@@ -48,7 +50,7 @@ export function ChatInput({
             key={s}
             onClick={() => setValue(s)}
             disabled={disabled}
-            className="px-2 py-0.5 text-xs bg-surface-inset text-text-secondary rounded border border-border-subtle hover:bg-surface-hover hover:text-text-primary transition-colors disabled:opacity-50"
+            className="px-2 py-0.5 text-xs bg-surface-inset text-accent-secondary rounded border border-accent-secondary/30 hover:bg-surface-hover hover:text-accent-secondary transition-colors disabled:opacity-50"
           >
             {s.length > 40 ? s.slice(0, 40) + '…' : s}
           </button>
@@ -72,12 +74,12 @@ export function ChatInput({
           disabled={disabled || !value.trim()}
           className="px-4 py-2 bg-accent-primary text-white text-sm font-medium rounded-lg hover:bg-accent-primary/80 active:bg-accent-primary/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          <Sparkles size={16} />
-          <span>Enviar</span>
+          <Send size={16} />
+          <span>{t('chat.send')}</span>
         </button>
       </div>
 
-      <p className="text-xs text-text-muted">Enter para enviar · Shift+Enter para nueva línea</p>
+      <p className="text-xs text-text-muted">{t('chat.inputHint')}</p>
     </div>
   )
 }

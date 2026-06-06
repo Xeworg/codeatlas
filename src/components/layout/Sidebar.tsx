@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { t } from '../../lib/i18n'
 import {
   Search,
   GitBranch,
@@ -117,11 +118,11 @@ function TreeNode({
 }
 
 const RAIL_ICON_BUTTONS = [
-  { icon: Search, label: 'Buscar' },
-  { icon: GitBranch, label: 'Dependencias' },
-  { icon: BarChart3, label: 'Estadísticas' },
-  { icon: MessageSquare, label: 'Chat' },
-  { icon: Settings, label: 'Configuración' },
+  { icon: Search, label: t('common.search') },
+  { icon: GitBranch, label: t('common.dependencies') },
+  { icon: BarChart3, label: t('common.statistics') },
+  { icon: MessageSquare, label: t('common.chat') },
+  { icon: Settings, label: t('common.settings') },
 ] as const
 
 export function Sidebar({ scanResult, selectedFileId, onSelectFile, onSearch }: SidebarProps) {
@@ -151,12 +152,20 @@ export function Sidebar({ scanResult, selectedFileId, onSelectFile, onSearch }: 
 
       {/* File tree panel */}
       <div className="flex flex-col w-56">
+        {/* Panel headers */}
+        <div className="px-3 py-2 border-b border-border-subtle">
+          <h2 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+            {t('sidebar.explorerTitle')}
+          </h2>
+          <p className="text-[10px] text-text-muted mt-0.5">{t('sidebar.explorerSubtitle')}</p>
+        </div>
+        {/* Search */}
         <div className="p-2 border-b border-border-subtle">
           <div className="relative flex items-center">
             <Search size={12} className="absolute left-2 text-text-muted pointer-events-none" />
             <input
               type="text"
-              placeholder="Buscar archivos..."
+              placeholder={t('sidebar.searchPlaceholder')}
               value={search}
               onChange={(e) => handleSearch(e.target.value)}
               className="w-full pl-7 pr-2 py-1 text-xs bg-surface-inset border border-border-subtle rounded-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-border-strong"
@@ -165,7 +174,7 @@ export function Sidebar({ scanResult, selectedFileId, onSelectFile, onSearch }: 
         </div>
         <div className="flex-1 overflow-y-auto py-1">
           {tree.length === 0 ? (
-            <p className="text-xs text-text-muted p-3">Abrí un proyecto para ver los archivos</p>
+            <p className="text-xs text-text-muted p-3">{t('sidebar.emptyState')}</p>
           ) : (
             tree.map((node) => (
               <TreeNode

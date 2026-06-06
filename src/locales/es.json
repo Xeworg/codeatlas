@@ -2,6 +2,12 @@
   "common": {
     "loading": "Cargando…",
     "error": "Error",
+    "retry": "Reintentar",
+    "settings": "Configuración",
+    "chat": "Chat",
+    "dependencies": "Dependencias",
+    "statistics": "Estadísticas",
+    "search": "Buscar",
     "noData": "Sin datos disponibles",
     "count": "{{count}} elemento(s)",
     "view": "Vista:",
@@ -12,7 +18,6 @@
     "save": "Guardar",
     "delete": "Eliminar",
     "edit": "Editar",
-    "search": "Buscar",
     "filter": "Filtrar",
     "reset": "Restablecer",
     "export": "Exportar",
@@ -68,10 +73,65 @@
     "couplingScore": "Puntuación de acoplamiento"
   },
   "views": {
-    "architecture": "Arquitectura",
+    "architecture": "Mapa de Arquitectura",
     "dependencies": "Dependencias",
-    "flowBeta": "Flujo",
+    "flowBeta": "Flujo de Datos",
     "betaTag": "beta"
+  },
+  "details": {
+    "selectNode": "Seleccioná un nodo para ver detalles",
+    "errorPrefix": "Error:",
+    "metadata": "Metadata",
+    "type": "Tipo:",
+    "lines": "Líneas:",
+    "ext": "Ext:",
+    "symbols": "Símbolos:",
+    "outline": "Outline",
+    "dependencies": "Dependencias",
+    "noneExported": "Ninguno exportado",
+    "unknownType": "?"
+  },
+  "app": {
+    "emptyProjectTitle": "Sin proyecto",
+    "emptyProjectDescription": "Abrí un proyecto para explorar su arquitectura",
+    "openProjectAction": "Abrir proyecto",
+    "scanningFiles": "Escaneando archivos…",
+    "buildingGraph": "Construyendo grafo…",
+    "unknownState": "Estado desconocido"
+  },
+  "tabs": {
+    "summary": "Resumen",
+    "impact": "Impacto"
+  },
+  "chat": {
+    "title": "ASISTENTE IA",
+    "menuTooltip": "Menú",
+    "noProjectLoaded": "No hay proyecto cargado.",
+    "emptyStateHint": "Preguntá sobre cualquier parte del proyecto.",
+    "emptyStateExample": "Ejemplo: \"¿Qué hace AuthService?\"",
+    "writing": "CodeAtlas está escribiendo...",
+    "openProjectToChat": "Abrí un proyecto para usar el chat",
+    "inputPlaceholder": "Escribí tu pregunta sobre el proyecto...",
+    "inputHint": "Enter para enviar · Shift+Enter para nueva línea",
+    "send": "Enviar"
+  },
+  "topBar": {
+    "newChat": "Nuevo Chat",
+    "newChatTitle": "Nuevo chat",
+    "openProject": "Abrir proyecto"
+  },
+  "sidebar": {
+    "explorerTitle": "EXPLORADOR",
+    "explorerSubtitle": "ESTRUCTURA DEL PROYECTO",
+    "searchPlaceholder": "Buscar archivos...",
+    "emptyState": "Abrí un proyecto para ver los archivos"
+  },
+  "status": {
+    "idle": "Sin proyecto",
+    "scanning": "Escaneando...",
+    "buildingGraph": "Construyendo grafo...",
+    "ready": "Listo",
+    "error": "Error"
   },
   "export": {
     "title": "Exportar análisis",

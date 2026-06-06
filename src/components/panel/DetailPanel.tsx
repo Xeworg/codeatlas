@@ -1,11 +1,12 @@
 // DetailPanel — shows metadata of selected node
 import { useEffect, useState } from 'react'
+import { t } from '../../lib/i18n'
 import { useSelectedNodeId, useGraphData } from '../../stores/graphStore'
 import { getNodeDetails, getNodeOutline } from '../../lib/tauri-api'
 import type { FileInfo, OutlineItem } from '../../lib/types'
 import { SymbolList } from './SymbolList'
 import { OutlineView } from './OutlineView'
-import { Info, ListTree, Link, Code, CornerDownRight } from 'lucide-react'
+import { ListTree, Link, Code, CornerDownRight } from 'lucide-react'
 
 export function DetailPanel() {
   const selectedNodeId = useSelectedNodeId()
@@ -49,7 +50,7 @@ export function DetailPanel() {
   if (!selectedNodeId) {
     return (
       <div className="h-full flex items-center justify-center text-text-muted text-sm p-4">
-        Select a node to see details
+        {t('details.selectNode')}
       </div>
     )
   }
@@ -57,7 +58,7 @@ export function DetailPanel() {
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center text-text-secondary text-sm">
-        Loading…
+        {t('common.loading')}
       </div>
     )
   }
@@ -65,7 +66,7 @@ export function DetailPanel() {
   if (error) {
     return (
       <div className="h-full flex items-center justify-center text-red-400 text-sm">
-        Error: {error}
+        {t('details.errorPrefix')} {error}
       </div>
     )
   }
@@ -79,8 +80,23 @@ export function DetailPanel() {
       {/* Header — full-width, no card wrapper */}
       <div className="bg-surface-elevated rounded-lg border border-border-subtle p-3">
         <div className="flex items-center gap-2 mb-2">
-          <Info size={14} className="text-text-muted" />
-          <h2 className="text-sm font-semibold text-text-primary truncate" title={details.name}>
+          <span
+            className={`px-1.5 py-0.5 text-[10px] font-bold uppercase rounded ${
+              details.extension === '.ts' || details.extension === '.tsx'
+                ? 'bg-blue-500/20 text-blue-400'
+                : details.extension === '.js' || details.extension === '.jsx'
+                  ? 'bg-yellow-500/20 text-yellow-400'
+                  : details.extension === '.py'
+                    ? 'bg-blue-400/20 text-blue-300'
+                    : 'bg-surface-hover text-text-muted'
+            }`}
+          >
+            {details.extension.replace('.', '') || '?'}
+          </span>
+          <h2
+            className="text-sm font-semibold text-text-primary truncate flex-1"
+            title={details.name}
+          >
             {details.name}
           </h2>
         </div>
@@ -94,26 +110,26 @@ export function DetailPanel() {
         <div className="flex items-center gap-2 mb-2">
           <Code size={14} className="text-text-muted" />
           <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-            Metadata
+            {t('details.metadata')}
           </span>
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
-            <span className="text-text-muted">Type:</span>{' '}
+            <span className="text-text-muted">{t('details.type')}</span>{' '}
             <span className="text-text-secondary capitalize">
-              {selectedNode?.type ?? 'unknown'}
+              {selectedNode?.type ?? t('details.unknownType')}
             </span>
           </div>
           <div>
-            <span className="text-text-muted">Lines:</span>{' '}
+            <span className="text-text-muted">{t('details.lines')}</span>{' '}
             <span className="text-text-secondary">{details.lines}</span>
           </div>
           <div>
-            <span className="text-text-muted">Ext:</span>{' '}
+            <span className="text-text-muted">{t('details.ext')}</span>{' '}
             <span className="text-text-secondary">{details.extension}</span>
           </div>
           <div>
-            <span className="text-text-muted">Symbols:</span>{' '}
+            <span className="text-text-muted">{t('details.symbols')}</span>{' '}
             <span className="text-text-secondary">{details.symbols.length}</span>
           </div>
         </div>
@@ -124,7 +140,7 @@ export function DetailPanel() {
         <div className="flex items-center gap-2 mb-2">
           <ListTree size={14} className="text-text-muted" />
           <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-            Outline
+            {t('details.outline')}
           </h3>
         </div>
         <OutlineView items={outline} loading={outlineLoading} error={outlineError} />
@@ -135,7 +151,7 @@ export function DetailPanel() {
         <div className="flex items-center gap-2 mb-2">
           <Link size={14} className="text-text-muted" />
           <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-            Dependencies
+            {t('details.dependencies')}
           </h3>
         </div>
         {details.symbols.filter((s) => s.exports).length > 0 ? (
@@ -152,7 +168,7 @@ export function DetailPanel() {
               ))}
           </ul>
         ) : (
-          <p className="text-xs text-text-muted">None exported</p>
+          <p className="text-xs text-text-muted">{t('details.noneExported')}</p>
         )}
       </div>
 
@@ -162,7 +178,7 @@ export function DetailPanel() {
           <div className="flex items-center gap-2 mb-3">
             <Code size={14} className="text-text-muted" />
             <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-              Symbols
+              {t('details.symbols')}
             </span>
           </div>
           <SymbolList symbols={details.symbols} />

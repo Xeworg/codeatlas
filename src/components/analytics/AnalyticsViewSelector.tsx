@@ -29,9 +29,6 @@ export function AnalyticsViewSelector() {
 
   return (
     <div className="flex items-center gap-1 bg-surface-elevated border-b border-border-subtle px-3 py-2 flex-shrink-0">
-      <span className="text-xs text-text-muted mr-2 font-semibold uppercase tracking-wide">
-        {t('common.view')}
-      </span>
       {VIEWS.map((view) => {
         const Icon = VIEW_ICONS[view.id]
         return (
@@ -42,15 +39,15 @@ export function AnalyticsViewSelector() {
             onClick={() => setView(view.id)}
             className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-semibold transition-all ${
               activeView === view.id
-                ? 'bg-accent-primary text-white shadow'
+                ? 'text-text-primary border-b-2 border-accent-secondary'
                 : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover'
             }`}
           >
             <Icon size={13} />
             {view.label}
             {view.beta && (
-              <span className="ml-1 text-[9px] bg-amber-600 text-white px-1 rounded align-middle">
-                beta
+              <span className="ml-1 text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full align-middle">
+                {t('views.betaTag')}
               </span>
             )}
           </button>

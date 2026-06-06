@@ -31,12 +31,12 @@ export function AppShell({
         {sidebar}
         <main className="flex-1 overflow-hidden relative">{children}</main>
         {rightPanel && (
-          <aside className="w-80 bg-surface-elevated border-l border-border-subtle flex flex-col overflow-hidden">
+          <aside className="w-96 bg-surface-elevated border-l border-border-subtle flex flex-col overflow-hidden">
             {rightPanel}
           </aside>
         )}
       </div>
-      <StatusBar scanResult={scanResult} scanDuration={scanDuration} />
+      <StatusBar scanResult={scanResult} scanDuration={scanDuration} status={status} />
     </div>
   )
 }

@@ -2,12 +2,13 @@
 // Part of PR5b (AI UI)
 
 import { useState, useRef, useEffect } from 'react'
-import { MessageSquare } from 'lucide-react'
+import { Sparkles, MoreHorizontal, MessageSquare } from 'lucide-react'
 import { chat } from '../../lib/tauri-api'
 import { ChatMessage } from './ChatMessage'
 import { ChatInput } from './ChatInput'
 import { Spinner } from '../common/Spinner'
 import { ErrorState } from '../common/ErrorState'
+import { t } from '../../lib/i18n'
 
 interface ChatPanelProps {
   projectId: string | null
@@ -59,7 +60,7 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
 
   const handleSend = async (content: string) => {
     if (!projectId) {
-      setErrorMsg('No hay proyecto cargado.')
+      setErrorMsg(t('chat.noProjectLoaded'))
       return
     }
     if (status === 'sending') return
@@ -101,25 +102,27 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col min-h-0 h-full">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-border-subtle bg-surface-elevated sticky top-0 z-10">
-        <MessageSquare size={18} className="text-text-muted" />
-        <div>
-          <h2 className="text-sm font-semibold text-text-primary">Chat Contextual</h2>
-          {contextNodeIds.length > 0 && (
-            <p className="text-xs text-text-muted">{contextNodeIds.length} nodo(s) en contexto</p>
-          )}
-        </div>
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-border-subtle bg-surface-elevated flex-shrink-0">
+        <Sparkles size={16} className="text-accent-secondary" />
+        <h2 className="text-sm font-semibold text-text-primary flex-1">{t('chat.title')}</h2>
+        <button
+          onClick={() => {}}
+          className="p-1 text-text-muted hover:text-text-secondary cursor-default"
+          title={t('chat.menuTooltip')}
+        >
+          <MoreHorizontal size={14} />
+        </button>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-text-muted py-8">
             <MessageSquare size={32} className="mb-3 text-text-muted opacity-60" />
-            <p className="text-sm text-center px-4">Preguntá sobre cualquier parte del proyecto.</p>
-            <p className="text-xs text-text-muted mt-1">Ejemplo: "¿Qué hace AuthService?"</p>
+            <p className="text-sm text-center px-4">{t('chat.emptyStateHint')}</p>
+            <p className="text-xs text-text-muted mt-1">{t('chat.emptyStateExample')}</p>
           </div>
         )}
 
@@ -130,7 +133,7 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
         {status === 'sending' && (
           <div className="flex items-center gap-2 text-text-muted">
             <Spinner size="sm" />
-            <span className="text-xs">CodeAtlas está escribiendo...</span>
+            <span className="text-xs">{t('chat.writing')}</span>
           </div>
         )}
 
@@ -144,12 +147,12 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
       </div>
 
       {/* Input */}
-      <div className="p-4 border-t border-border-subtle bg-surface-inset">
+      <div className="p-4 border-t border-border-subtle bg-surface-inset flex-shrink-0">
         {projectId ? (
           <ChatInput onSend={handleSend} disabled={status === 'sending'} />
         ) : (
           <div className="text-center text-sm text-text-muted py-2">
-            Abrí un proyecto para usar el chat
+            {t('chat.openProjectToChat')}
           </div>
         )}
       </div>
