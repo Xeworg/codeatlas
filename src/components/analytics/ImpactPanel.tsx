@@ -12,7 +12,7 @@ interface ImpactPanelProps {
 const SCORE_COLOR = (score: number): string => {
   if (score >= 0.7) return 'text-red-400'
   if (score >= 0.4) return 'text-amber-400'
-  return 'text-slate-400'
+  return 'text-text-muted'
 }
 
 const SCORE_BG = (score: number): string => {

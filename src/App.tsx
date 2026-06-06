@@ -294,7 +294,7 @@ function App() {
         <div className="flex items-center justify-center h-full">
           <div className="text-center">
             <Spinner size="lg" />
-            <p className="mt-3 text-sm text-slate-400">
+            <p className="mt-3 text-sm text-text-muted">
               {status === 'scanning' ? 'Scanning files…' : 'Building graph…'}
             </p>
           </div>
@@ -310,14 +310,14 @@ function App() {
 
           {/* T2.2: ArchitectureCard — shown when detection is available */}
           {V3_H1_ENABLED && architectureDetection && (
-            <div className="px-4 py-2 bg-slate-900 border-b border-slate-700 flex-shrink-0">
+            <div className="px-4 py-2 bg-surface-base border-b border-border-subtle flex-shrink-0">
               <ArchitectureCard detection={architectureDetection} />
             </div>
           )}
 
           {/* T2.4: InsightsPanel — shown below graph when insights are available */}
           {V3_H1_ENABLED && graphInsights ? (
-            <div className="h-52 border-t border-slate-700 flex-shrink-0 flex flex-col overflow-hidden bg-slate-900">
+            <div className="h-52 border-t border-border-subtle flex-shrink-0 flex flex-col overflow-hidden bg-surface-base">
               <InsightsPanel insights={graphInsights} />
             </div>
           ) : null}
@@ -330,7 +330,7 @@ function App() {
 
           {/* Detail panel — tabs include Impact when v3_h1 */}
           {selectedNodeId && (
-            <div className="h-72 border-t border-slate-700 overflow-hidden flex-shrink-0 flex flex-col bg-white">
+            <div className="h-72 border-t border-border-subtle overflow-hidden flex-shrink-0 flex flex-col bg-surface-base">
               <TabSwitcher
                 tabs={detailTabs}
                 activeTab={detailTab}

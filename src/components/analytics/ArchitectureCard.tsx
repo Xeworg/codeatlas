@@ -20,7 +20,7 @@ const PATTERN_LABELS: Record<string, string> = {
 const CONFIDENCE_COLOR = (confidence: number): string => {
   if (confidence >= 0.7) return 'text-emerald-400'
   if (confidence >= 0.4) return 'text-amber-400'
-  return 'text-slate-400'
+  return 'text-text-muted'
 }
 
 export function ArchitectureCard({ detection }: ArchitectureCardProps) {
@@ -61,7 +61,7 @@ export function ArchitectureCard({ detection }: ArchitectureCardProps) {
                 ? 'bg-emerald-500'
                 : confidence >= 0.4
                   ? 'bg-amber-500'
-                  : 'bg-slate-500'
+                  : 'bg-surface-hover'
             }`}
             style={{ width: `${Math.round(confidence * 100)}%` }}
           />

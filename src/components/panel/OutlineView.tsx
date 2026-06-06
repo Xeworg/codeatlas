@@ -2,6 +2,7 @@
 // Integrates into DetailPanel to show a VS Code-like outline per node/file.
 
 import { useState } from 'react'
+import { ChevronRight, ChevronDown, AlertTriangle } from 'lucide-react'
 import type { OutlineItem, OutlineItemKind } from '../../lib/types'
 
 // ── Kind badge helpers ────────────────────────────────────────────────────
@@ -41,8 +42,8 @@ const KIND_LABELS: Record<OutlineItemKind, string> = {
 function KindBadge({ kind }: { kind: OutlineItemKind }) {
   return (
     <span
-      className="inline-block text-[9px] font-mono font-bold px-1 py-0.5 rounded"
-      style={{ background: '#334155', color: '#94a3b8', minWidth: 20, textAlign: 'center' }}
+      className="inline-block text-[9px] font-mono font-bold px-1 py-0.5 rounded bg-surface-inset text-text-secondary"
+      style={{ minWidth: 20, textAlign: 'center' }}
       title={KIND_LABELS[kind] ?? kind}
     >
       {KIND_ICONS[kind] ?? '?'}
@@ -60,17 +61,17 @@ function OutlineItemRow({ item, depth }: { item: OutlineItem; depth: number }) {
   return (
     <li className="list-none">
       <div
-        className="flex items-center gap-1.5 py-0.5 pr-1 rounded hover:bg-slate-700/40 cursor-default text-xs"
+        className="flex items-center gap-1.5 py-0.5 pr-1 rounded hover:bg-surface-hover cursor-default text-xs"
         style={{ paddingLeft: depth * 16 + 4 }}
       >
         {/* collapse toggle */}
         {hasChildren ? (
           <button
             onClick={() => setCollapsed((v) => !v)}
-            className="w-4 h-4 flex items-center justify-center text-slate-500 hover:text-slate-300 flex-shrink-0"
+            className="w-4 h-4 flex items-center justify-center text-text-muted hover:text-text-secondary flex-shrink-0"
             aria-label={collapsed ? 'expand' : 'collapse'}
           >
-            {collapsed ? '▶' : '▼'}
+            {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
           </button>
         ) : (
           <span className="w-4 h-4 flex-shrink-0" />
@@ -78,11 +79,11 @@ function OutlineItemRow({ item, depth }: { item: OutlineItem; depth: number }) {
 
         <KindBadge kind={item.kind} />
 
-        <span className="font-mono text-slate-200 truncate flex-1" title={item.name}>
+        <span className="font-mono text-text-primary truncate flex-1" title={item.name}>
           {item.name}
         </span>
 
-        <span className="text-slate-600 font-mono text-[10px] flex-shrink-0">
+        <span className="text-text-muted font-mono text-[10px] flex-shrink-0">
           {item.lineStart}–{item.lineEnd}
         </span>
       </div>
@@ -111,7 +112,7 @@ export function OutlineView({ items, loading = false, error = null }: OutlineVie
   // Loading
   if (loading) {
     return (
-      <div className="flex items-center gap-2 py-2 text-xs text-slate-500">
+      <div className="flex items-center gap-2 py-2 text-xs text-text-muted">
         <span className="animate-pulse">◌</span>
         <span>Loading outline…</span>
       </div>
@@ -122,15 +123,18 @@ export function OutlineView({ items, loading = false, error = null }: OutlineVie
   if (error) {
     return (
       <div className="py-2 text-xs text-amber-400">
-        <span>⚠ Outline unavailable</span>
-        <span className="text-slate-500 ml-1">— details preserved below</span>
+        <span className="flex items-center gap-1">
+          <AlertTriangle size={12} />
+          Outline unavailable
+        </span>
+        <span className="text-text-muted ml-1">— details preserved below</span>
       </div>
     )
   }
 
   // Empty
   if (items.length === 0) {
-    return <div className="py-2 text-xs text-slate-600 italic">No symbols detected</div>
+    return <div className="py-2 text-xs text-text-muted italic">No symbols detected</div>
   }
 
   // Tree
