@@ -31,15 +31,15 @@ export function ArchitectureCard({ detection }: ArchitectureCardProps) {
   const isUnknown = pattern === 'unknown'
 
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-lg p-4 space-y-3">
+    <div className="bg-surface-elevated border border-border-subtle rounded-lg p-4 space-y-3">
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">
+          <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">
             {t('architecture.title')}
           </h3>
-          <p className="text-lg font-bold text-slate-100 mt-0.5">
-            {isUnknown ? <span className="text-slate-500 italic">{label}</span> : label}
+          <p className="text-lg font-bold text-text-primary mt-0.5">
+            {isUnknown ? <span className="text-text-muted italic">{label}</span> : label}
           </p>
         </div>
         {!isUnknown && (
@@ -54,7 +54,7 @@ export function ArchitectureCard({ detection }: ArchitectureCardProps) {
 
       {/* Confidence bar */}
       {!isUnknown && (
-        <div className="w-full bg-slate-700 rounded-full h-1.5">
+        <div className="w-full bg-surface-inset rounded-full h-1.5">
           <div
             className={`h-1.5 rounded-full transition-all ${
               confidence >= 0.7
@@ -73,7 +73,7 @@ export function ArchitectureCard({ detection }: ArchitectureCardProps) {
         <div className="space-y-2">
           <button
             onClick={() => setShowEvidence((v) => !v)}
-            className="text-xs text-slate-400 hover:text-slate-200 underline"
+            className="text-xs text-text-muted hover:text-text-secondary underline"
           >
             {showEvidence ? t('architecture.hideEvidence') : t('architecture.showEvidence')} (
             {t('architecture.filesCount', { count: String(evidence.nodes.length) })},{' '}
@@ -81,13 +81,13 @@ export function ArchitectureCard({ detection }: ArchitectureCardProps) {
           </button>
 
           {showEvidence && (
-            <div className="bg-slate-900 rounded p-2 space-y-2 text-xs max-h-48 overflow-y-auto">
+            <div className="bg-surface-base rounded p-2 space-y-2 text-xs max-h-48 overflow-y-auto">
               {evidence.reasons.length > 0 && (
                 <div>
-                  <p className="text-slate-500 font-semibold mb-1">{t('architecture.reasons')}</p>
+                  <p className="text-text-muted font-semibold mb-1">{t('architecture.reasons')}</p>
                   <ul className="space-y-0.5">
                     {evidence.reasons.map((r, i) => (
-                      <li key={i} className="text-slate-300">
+                      <li key={i} className="text-text-secondary">
                         • {r}
                       </li>
                     ))}
@@ -96,12 +96,12 @@ export function ArchitectureCard({ detection }: ArchitectureCardProps) {
               )}
               {evidence.nodes.length > 0 && (
                 <div>
-                  <p className="text-slate-500 font-semibold mb-1 mt-2">
+                  <p className="text-text-muted font-semibold mb-1 mt-2">
                     {t('architecture.files')}
                   </p>
                   <ul className="space-y-0.5">
                     {evidence.nodes.map((n, i) => (
-                      <li key={i} className="text-slate-400 font-mono break-all">
+                      <li key={i} className="text-text-muted font-mono break-all">
                         {n}
                       </li>
                     ))}

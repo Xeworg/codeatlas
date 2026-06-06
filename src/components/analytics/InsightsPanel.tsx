@@ -27,7 +27,7 @@ export function InsightsPanel({ insights }: InsightsPanelProps) {
       case 'cycles':
         if (cycles.length === 0) {
           return (
-            <p className="text-sm text-slate-500 italic p-4 text-center">
+            <p className="text-sm text-text-muted italic p-4 text-center">
               {t('insights.noCycles')}
             </p>
           )
@@ -39,12 +39,12 @@ export function InsightsPanel({ insights }: InsightsPanelProps) {
                 <span className="text-red-400 font-semibold">
                   {t('insights.cycleNumber', { number: String(i + 1) })}
                 </span>
-                <span className="text-slate-400 ml-2">
+                <span className="text-text-muted ml-2">
                   {t('insights.cycleNodes', { count: String(cycle.length) })}
                 </span>
                 <div className="mt-1 space-y-0.5">
                   {cycle.nodes.map((node, j) => (
-                    <span key={j} className="text-slate-300 font-mono">
+                    <span key={j} className="text-text-secondary font-mono">
                       {node}
                       {j < cycle.nodes.length - 1 ? ' → ' : ''}
                     </span>
@@ -58,7 +58,7 @@ export function InsightsPanel({ insights }: InsightsPanelProps) {
       case 'hotspots':
         if (hotspots.length === 0) {
           return (
-            <p className="text-sm text-slate-500 italic p-4 text-center">
+            <p className="text-sm text-text-muted italic p-4 text-center">
               {t('insights.noHotspots')}
             </p>
           )
@@ -71,8 +71,8 @@ export function InsightsPanel({ insights }: InsightsPanelProps) {
                 className="bg-amber-900/30 border border-amber-800 rounded p-2 flex items-start justify-between gap-2"
               >
                 <div className="min-w-0">
-                  <p className="text-xs font-mono text-slate-200 truncate">{spot.nodeId}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{spot.reason}</p>
+                  <p className="text-xs font-mono text-text-primary truncate">{spot.nodeId}</p>
+                  <p className="text-xs text-text-muted mt-0.5">{spot.reason}</p>
                 </div>
                 <span className="text-amber-400 font-bold text-sm flex-shrink-0">
                   {Math.round(spot.couplingScore * 100)}%
@@ -85,30 +85,30 @@ export function InsightsPanel({ insights }: InsightsPanelProps) {
       case 'metrics':
         return (
           <div className="p-4 space-y-3">
-            <div className="flex justify-between items-center py-2 border-b border-slate-700">
-              <span className="text-xs text-slate-400">{t('insights.avgCoupling')}</span>
-              <span className="text-sm font-mono font-semibold text-slate-200">
+            <div className="flex justify-between items-center py-2 border-b border-border-subtle">
+              <span className="text-xs text-text-muted">{t('insights.avgCoupling')}</span>
+              <span className="text-sm font-mono font-semibold text-text-secondary">
                 {avgCoupling != null ? avgCoupling.toFixed(3) : '—'}
               </span>
             </div>
-            <div className="flex justify-between items-center py-2 border-b border-slate-700">
-              <span className="text-xs text-slate-400">{t('insights.graphDensity')}</span>
-              <span className="text-sm font-mono font-semibold text-slate-200">
+            <div className="flex justify-between items-center py-2 border-b border-border-subtle">
+              <span className="text-xs text-text-muted">{t('insights.graphDensity')}</span>
+              <span className="text-sm font-mono font-semibold text-text-secondary">
                 {density != null ? density.toFixed(3) : '—'}
               </span>
             </div>
             <div className="flex justify-between items-center py-2">
-              <span className="text-xs text-slate-400">{t('insights.totalCycles')}</span>
+              <span className="text-xs text-text-muted">{t('insights.totalCycles')}</span>
               <span className="text-sm font-mono font-semibold text-red-400">{cycles.length}</span>
             </div>
             <div className="flex justify-between items-center py-2">
-              <span className="text-xs text-slate-400">{t('insights.totalHotspots')}</span>
+              <span className="text-xs text-text-muted">{t('insights.totalHotspots')}</span>
               <span className="text-sm font-mono font-semibold text-amber-400">
                 {hotspots.length}
               </span>
             </div>
             <div className="flex justify-between items-center py-2">
-              <span className="text-xs text-slate-400">{t('insights.status')}</span>
+              <span className="text-xs text-text-muted">{t('insights.status')}</span>
               <span
                 className={`text-xs px-2 py-0.5 rounded font-semibold ${
                   status === 'ok'
@@ -131,7 +131,7 @@ export function InsightsPanel({ insights }: InsightsPanelProps) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Tabs */}
-      <div className="flex border-b border-slate-700 flex-shrink-0" role="tablist">
+      <div className="flex border-b border-border-subtle flex-shrink-0" role="tablist">
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -140,8 +140,8 @@ export function InsightsPanel({ insights }: InsightsPanelProps) {
             onClick={() => setActiveTab(tab.id)}
             className={`flex-1 py-2 text-xs font-semibold transition-colors ${
               activeTab === tab.id
-                ? 'text-slate-100 border-b-2 border-blue-500 bg-slate-800'
-                : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'
+                ? 'text-text-primary border-b-2 border-border-accent bg-surface-elevated'
+                : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover'
             }`}
           >
             {tab.label}
