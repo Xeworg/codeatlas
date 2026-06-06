@@ -5,6 +5,7 @@ import { getNodeDetails, getNodeOutline } from '../../lib/tauri-api'
 import type { FileInfo, OutlineItem } from '../../lib/types'
 import { SymbolList } from './SymbolList'
 import { OutlineView } from './OutlineView'
+import { Info, ListTree, Link, Code, CornerDownRight } from 'lucide-react'
 
 export function DetailPanel() {
   const selectedNodeId = useSelectedNodeId()
@@ -47,7 +48,7 @@ export function DetailPanel() {
 
   if (!selectedNodeId) {
     return (
-      <div className="h-full flex items-center justify-center text-slate-500 text-sm p-4">
+      <div className="h-full flex items-center justify-center text-text-muted text-sm p-4">
         Select a node to see details
       </div>
     )
@@ -55,7 +56,9 @@ export function DetailPanel() {
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center text-slate-400 text-sm">Loading…</div>
+      <div className="h-full flex items-center justify-center text-text-secondary text-sm">
+        Loading…
+      </div>
     )
   }
 
@@ -72,70 +75,99 @@ export function DetailPanel() {
   const selectedNode = graphData?.nodes.find((n) => n.id === selectedNodeId)
 
   return (
-    <div className="h-full overflow-y-auto bg-slate-900 text-slate-200 p-4 space-y-4">
-      {/* Header */}
-      <div>
-        <h2 className="text-base font-semibold text-slate-100 truncate" title={details.name}>
-          {details.name}
-        </h2>
-        <p className="text-xs text-slate-500 break-all" title={details.path}>
+    <div className="h-full overflow-y-auto bg-surface-base text-text-primary p-4 space-y-3">
+      {/* Header — full-width, no card wrapper */}
+      <div className="bg-surface-elevated rounded-lg border border-border-subtle p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Info size={14} className="text-text-muted" />
+          <h2 className="text-sm font-semibold text-text-primary truncate" title={details.name}>
+            {details.name}
+          </h2>
+        </div>
+        <p className="text-xs text-text-muted break-all" title={details.path}>
           {details.path}
         </p>
       </div>
 
       {/* Metadata */}
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div>
-          <span className="text-slate-500">Type:</span>{' '}
-          <span className="text-slate-300 capitalize">{selectedNode?.type ?? 'unknown'}</span>
+      <div className="bg-surface-elevated rounded-lg border border-border-subtle p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Code size={14} className="text-text-muted" />
+          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+            Metadata
+          </span>
         </div>
-        <div>
-          <span className="text-slate-500">Lines:</span>{' '}
-          <span className="text-slate-300">{details.lines}</span>
-        </div>
-        <div>
-          <span className="text-slate-500">Ext:</span>{' '}
-          <span className="text-slate-300">{details.extension}</span>
-        </div>
-        <div>
-          <span className="text-slate-500">Symbols:</span>{' '}
-          <span className="text-slate-300">{details.symbols.length}</span>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div>
+            <span className="text-text-muted">Type:</span>{' '}
+            <span className="text-text-secondary capitalize">
+              {selectedNode?.type ?? 'unknown'}
+            </span>
+          </div>
+          <div>
+            <span className="text-text-muted">Lines:</span>{' '}
+            <span className="text-text-secondary">{details.lines}</span>
+          </div>
+          <div>
+            <span className="text-text-muted">Ext:</span>{' '}
+            <span className="text-text-secondary">{details.extension}</span>
+          </div>
+          <div>
+            <span className="text-text-muted">Symbols:</span>{' '}
+            <span className="text-text-secondary">{details.symbols.length}</span>
+          </div>
         </div>
       </div>
 
-      {/* Outline section */}
-      <div>
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
-          Outline
-        </h3>
+      {/* Outline */}
+      <div className="bg-surface-elevated rounded-lg border border-border-subtle p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <ListTree size={14} className="text-text-muted" />
+          <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+            Outline
+          </h3>
+        </div>
         <OutlineView items={outline} loading={outlineLoading} error={outlineError} />
       </div>
 
       {/* Dependencies */}
-      <div>
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
-          Dependencies
-        </h3>
+      <div className="bg-surface-elevated rounded-lg border border-border-subtle p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Link size={14} className="text-text-muted" />
+          <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+            Dependencies
+          </h3>
+        </div>
         {details.symbols.filter((s) => s.exports).length > 0 ? (
           <ul className="space-y-0.5">
             {details.symbols
               .filter((s) => s.exports)
               .slice(0, 20)
               .map((s) => (
-                <li key={s.id} className="text-xs text-slate-300 flex items-center gap-1">
-                  <span className="text-slate-600">▸</span>
+                <li key={s.id} className="text-xs text-text-secondary flex items-center gap-1">
+                  <CornerDownRight size={12} className="text-text-muted shrink-0" />
                   <span className="font-mono">{s.name}</span>
-                  <span className="text-slate-600">({s.kind})</span>
+                  <span className="text-text-muted">({s.kind})</span>
                 </li>
               ))}
           </ul>
         ) : (
-          <p className="text-xs text-slate-600">None exported</p>
+          <p className="text-xs text-text-muted">None exported</p>
         )}
       </div>
 
       {/* Symbols */}
-      {details.symbols.length > 0 && <SymbolList symbols={details.symbols} />}
+      {details.symbols.length > 0 && (
+        <div className="bg-surface-elevated rounded-lg border border-border-subtle p-3">
+          <div className="flex items-center gap-2 mb-3">
+            <Code size={14} className="text-text-muted" />
+            <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+              Symbols
+            </span>
+          </div>
+          <SymbolList symbols={details.symbols} />
+        </div>
+      )}
     </div>
   )
 }
