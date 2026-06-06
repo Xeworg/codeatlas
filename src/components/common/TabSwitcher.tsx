@@ -1,10 +1,14 @@
-// Simple tab switcher for panel sections
-// Part of PR5b (AI UI)
+// TabSwitcher — segmented control for panel sections
+// Slice 4 (milestone 2): icon is now a ReactNode so callers can pass
+// Lucide components or any other icon node. Restyled to the dark
+// reference palette: recessed inset track, subtle separators, violet
+// accent underline on the active tab, and muted inactive labels.
+import type { ReactNode } from 'react'
 
-interface Tab {
+export interface Tab {
   id: string
   label: string
-  icon?: string
+  icon?: ReactNode
 }
 
 interface TabSwitcherProps {
@@ -15,21 +19,45 @@ interface TabSwitcherProps {
 
 export function TabSwitcher({ tabs, activeTab, onChange }: TabSwitcherProps) {
   return (
-    <div className="flex border-b border-gray-200 bg-white">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          onClick={() => onChange(tab.id)}
-          className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === tab.id
-              ? 'border-blue-500 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-          }`}
-        >
-          {tab.icon && <span className="text-base">{tab.icon}</span>}
-          <span>{tab.label}</span>
-        </button>
-      ))}
+    <div
+      role="tablist"
+      className="flex bg-surface-inset border-b border-border-subtle"
+    >
+      {tabs.map((tab) => {
+        const isActive = activeTab === tab.id
+        return (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onChange(tab.id)}
+            className={`group relative flex items-center gap-2 px-4 py-2 text-xs font-medium transition-colors ${
+              isActive
+                ? 'text-text-primary'
+                : 'text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            {tab.icon && (
+              <span
+                aria-hidden
+                className={`inline-flex items-center justify-center transition-colors ${
+                  isActive ? 'text-accent-secondary' : 'text-text-muted group-hover:text-text-secondary'
+                }`}
+              >
+                {tab.icon}
+              </span>
+            )}
+            <span>{tab.label}</span>
+            {/* Active underline — violet accent matches the reference's tab indicator */}
+            {isActive && (
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-x-0 -bottom-px h-0.5 bg-accent-secondary"
+              />
+            )}
+          </button>
+        )
+      })}
     </div>
   )
 }

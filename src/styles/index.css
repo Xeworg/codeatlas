@@ -8,14 +8,28 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Design tokens */
+  --surface-base: #0a0a0b;
+  --surface-elevated: #141416;
+  --surface-hover: #1c1c1f;
+  --surface-active: #222226;
+  --surface-inset: #0e0e10;
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.1);
+  --border-accent: #3b82f6;
+  --text-primary: #f0f0f5;
+  --text-secondary: #a0a0a8;
+  --text-muted: #6e6e78;
 }
 
 body {
-  @apply bg-surface-base text-white;
+  @apply bg-surface-base text-text-primary;
   margin: 0;
   min-height: 100vh;
 }
 
 #root {
   min-height: 100vh;
+  @apply bg-surface-base;
 }

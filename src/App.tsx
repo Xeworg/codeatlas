@@ -4,6 +4,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
+import { FileText, Bot, MessageSquare, Zap, FolderOpen, HelpCircle } from 'lucide-react'
 import { AppShell } from './components/layout/AppShell'
 import { Sidebar } from './components/layout/Sidebar'
 import { EmptyState } from './components/common/EmptyState'
@@ -43,10 +44,16 @@ import type {
 
 type DetailTab = 'details' | 'ai' | 'chat' | 'impact'
 
-const V2_DETAIL_TABS: { id: DetailTab; label: string; icon: string }[] = [
-  { id: 'details', label: 'Detalles', icon: '📋' },
-  { id: 'ai', label: 'IA', icon: '🤖' },
-  { id: 'chat', label: 'Chat', icon: '💬' },
+interface DetailTabDef {
+  id: DetailTab
+  label: string
+  icon: React.ReactNode
+}
+
+const V2_DETAIL_TABS: DetailTabDef[] = [
+  { id: 'details', label: 'Detalles', icon: <FileText size={14} strokeWidth={1.75} /> },
+  { id: 'ai', label: 'IA', icon: <Bot size={14} strokeWidth={1.75} /> },
+  { id: 'chat', label: 'Chat', icon: <MessageSquare size={14} strokeWidth={1.75} /> },
 ]
 
 function App() {
@@ -258,7 +265,14 @@ function App() {
   }
 
   const detailTabs = V3_H1_ENABLED
-    ? [...V2_DETAIL_TABS, { id: 'impact' as DetailTab, label: 'Impacto', icon: '💥' }]
+    ? [
+        ...V2_DETAIL_TABS,
+        {
+          id: 'impact' as DetailTab,
+          label: 'Impacto',
+          icon: <Zap size={14} strokeWidth={1.75} />,
+        },
+      ]
     : V2_DETAIL_TABS
 
   const mainContent = () => {
@@ -267,7 +281,7 @@ function App() {
     if (status === 'idle') {
       return (
         <EmptyState
-          icon="📂"
+          icon={<FolderOpen size={24} strokeWidth={1.5} />}
           title="No project"
           description="Open a project to explore its architecture"
           action={{ label: 'Open project', onClick: handleOpenProject }}
@@ -329,7 +343,7 @@ function App() {
       )
     }
 
-    return <EmptyState icon="?" title="Unknown state" />
+    return <EmptyState icon={<HelpCircle size={24} strokeWidth={1.5} />} title="Unknown state" />
   }
 
   const scanDuration = scanStartTime ? Date.now() - scanStartTime : null

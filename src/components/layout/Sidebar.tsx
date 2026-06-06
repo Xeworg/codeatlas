@@ -1,4 +1,16 @@
 import { useState } from 'react'
+import {
+  Search,
+  GitBranch,
+  BarChart3,
+  MessageSquare,
+  Settings,
+  ChevronRight,
+  ChevronDown,
+  File,
+  Folder,
+  FolderOpen,
+} from 'lucide-react'
 import type { ScanResult } from '../../lib/types'
 
 interface SidebarProps {
@@ -58,16 +70,35 @@ function TreeNode({
   return (
     <div>
       <div
-        className={`flex items-center gap-1 px-2 py-0.5 text-xs cursor-pointer rounded hover:bg-gray-700 ${
-          isSelected ? 'bg-blue-900 text-blue-300' : 'text-gray-300'
+        className={`flex items-center gap-1.5 px-2 py-1 text-xs cursor-pointer rounded-sm transition-colors ${
+          isSelected
+            ? 'bg-surface-active text-text-primary border-l-2 border-accent-primary'
+            : 'text-text-secondary hover:bg-surface-hover'
         }`}
-        style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        style={{ paddingLeft: `${depth * 14 + 8}px` }}
         onClick={() => {
           if (isDir) setExpanded((e) => !e)
           else onSelect(node.id)
         }}
       >
-        <span className="text-gray-500">{isDir ? (expanded ? '▼' : '▶') : '·'}</span>
+        {/* Expand/collapse chevron or type icon */}
+        {isDir ? (
+          expanded ? (
+            <ChevronDown size={12} className="text-text-muted flex-shrink-0" />
+          ) : (
+            <ChevronRight size={12} className="text-text-muted flex-shrink-0" />
+          )
+        ) : (
+          <File size={12} className="text-text-muted flex-shrink-0" />
+        )}
+        {/* Folder or file icon */}
+        {isDir ? (
+          expanded ? (
+            <FolderOpen size={12} className="text-text-muted flex-shrink-0" />
+          ) : (
+            <Folder size={12} className="text-text-muted flex-shrink-0" />
+          )
+        ) : null}
         <span className="truncate">{node.name}</span>
       </div>
       {isDir &&
@@ -85,6 +116,14 @@ function TreeNode({
   )
 }
 
+const RAIL_ICON_BUTTONS = [
+  { icon: Search, label: 'Buscar' },
+  { icon: GitBranch, label: 'Dependencias' },
+  { icon: BarChart3, label: 'Estadísticas' },
+  { icon: MessageSquare, label: 'Chat' },
+  { icon: Settings, label: 'Configuración' },
+] as const
+
 export function Sidebar({ scanResult, selectedFileId, onSelectFile, onSearch }: SidebarProps) {
   const [search, setSearch] = useState('')
   const tree = scanResult ? buildTree(scanResult.files) : []
@@ -95,30 +134,50 @@ export function Sidebar({ scanResult, selectedFileId, onSelectFile, onSearch }: 
   }
 
   return (
-    <aside className="w-56 bg-gray-850 border-r border-gray-700 flex flex-col flex-shrink-0">
-      <div className="p-2 border-b border-gray-700">
-        <input
-          type="text"
-          placeholder="Buscar archivos..."
-          value={search}
-          onChange={(e) => handleSearch(e.target.value)}
-          className="w-full px-2 py-1 text-xs bg-gray-800 border border-gray-600 rounded text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
-        />
-      </div>
-      <div className="flex-1 overflow-y-auto py-1">
-        {tree.length === 0 ? (
-          <p className="text-xs text-gray-500 p-3">Abrí un proyecto para ver los archivos</p>
-        ) : (
-          tree.map((node) => (
-            <TreeNode
-              key={node.id}
-              node={node}
-              depth={0}
-              selectedId={selectedFileId}
-              onSelect={onSelectFile}
+    <aside className="flex bg-surface-elevated border-r border-border-subtle flex-shrink-0 overflow-hidden">
+      {/* Icon rail */}
+      <nav className="w-12 flex flex-col items-center py-2 gap-1 border-r border-border-subtle">
+        {RAIL_ICON_BUTTONS.map(({ icon: Icon, label }) => (
+          <button
+            key={label}
+            title={label}
+            aria-label={label}
+            className="w-9 h-9 flex items-center justify-center rounded-sm text-text-muted hover:text-text-secondary hover:bg-surface-hover transition-colors cursor-default"
+          >
+            <Icon size={18} />
+          </button>
+        ))}
+      </nav>
+
+      {/* File tree panel */}
+      <div className="flex flex-col w-56">
+        <div className="p-2 border-b border-border-subtle">
+          <div className="relative flex items-center">
+            <Search size={12} className="absolute left-2 text-text-muted pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Buscar archivos..."
+              value={search}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="w-full pl-7 pr-2 py-1 text-xs bg-surface-inset border border-border-subtle rounded-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-border-strong"
             />
-          ))
-        )}
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto py-1">
+          {tree.length === 0 ? (
+            <p className="text-xs text-text-muted p-3">Abrí un proyecto para ver los archivos</p>
+          ) : (
+            tree.map((node) => (
+              <TreeNode
+                key={node.id}
+                node={node}
+                depth={0}
+                selectedId={selectedFileId}
+                onSelect={onSelectFile}
+              />
+            ))
+          )}
+        </div>
       </div>
     </aside>
   )

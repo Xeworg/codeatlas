@@ -1,3 +1,4 @@
+import { Circle } from 'lucide-react'
 import type { ScanStatus } from '../../lib/types'
 
 interface TopBarProps {
@@ -14,8 +15,8 @@ const statusLabels: Record<ScanStatus, string> = {
   error: 'Error',
 }
 
-const statusColors: Record<ScanStatus, string> = {
-  idle: 'text-gray-400',
+const statusDotColor: Record<ScanStatus, string> = {
+  idle: 'text-text-muted',
   scanning: 'text-yellow-400',
   building_graph: 'text-blue-400',
   ready: 'text-green-400',
@@ -24,15 +25,23 @@ const statusColors: Record<ScanStatus, string> = {
 
 export function TopBar({ projectName, status, onOpenProject }: TopBarProps) {
   return (
-    <header className="h-12 bg-gray-900 border-b border-gray-700 flex items-center px-4 gap-4 flex-shrink-0">
-      <span className="text-sm font-medium text-gray-200 truncate max-w-[200px]">
+    <header className="h-12 bg-surface-elevated border-b border-border-subtle flex items-center px-4 gap-3 flex-shrink-0">
+      {/* Project name as pseudo-dropdown */}
+      <span className="text-sm font-medium text-text-primary truncate max-w-[200px] px-2 py-1 rounded-sm border border-border-subtle hover:border-border-strong hover:bg-surface-hover cursor-default select-none">
         {projectName ?? 'CodeAtlas'}
       </span>
-      <span className={`text-xs ${statusColors[status]}`}>{statusLabels[status]}</span>
+
+      {/* Status dot + label */}
+      <span className="flex items-center gap-1.5 text-xs text-text-secondary">
+        <Circle size={8} fill="currentColor" className={statusDotColor[status]} />
+        {statusLabels[status]}
+      </span>
+
       <div className="flex-1" />
+
       <button
         onClick={onOpenProject}
-        className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+        className="px-3 py-1 text-xs text-text-primary border border-border-subtle rounded-sm hover:border-border-strong hover:bg-surface-hover transition-colors"
       >
         Abrir proyecto
       </button>
