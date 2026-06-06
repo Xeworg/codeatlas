@@ -3,6 +3,7 @@
 
 import type { ChatMessage as ChatMessageType } from '../../lib/types'
 import { MarkdownView } from '../common/MarkdownView'
+import { Bot } from 'lucide-react'
 
 interface ChatMessageProps {
   message: ChatMessageType
@@ -17,28 +18,28 @@ export function ChatMessage({ message }: ChatMessageProps) {
       <div
         className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
           isUser
-            ? 'bg-blue-600 text-white rounded-br-md'
+            ? 'bg-accent-primary text-white rounded-br-md'
             : isAssistant
-              ? 'bg-gray-100 text-gray-800 rounded-bl-md'
-              : 'bg-gray-50 text-gray-500 italic text-sm'
+              ? 'bg-surface-elevated text-text-primary rounded-bl-md border border-border-subtle'
+              : 'bg-surface-inset text-text-muted italic text-sm'
         }`}
       >
         {/* Role badge for assistant */}
         {isAssistant && (
-          <div className="text-xs text-purple-600 font-medium mb-1 flex items-center gap-1">
-            <span>🤖</span>
+          <div className="text-xs text-accent-secondary font-medium mb-1 flex items-center gap-1">
+            <Bot size={12} />
             <span>CodeAtlas</span>
           </div>
         )}
 
         {/* Content */}
-        <div className={isUser ? 'text-white' : 'text-gray-800'}>
+        <div className={isUser ? 'text-white' : 'text-text-primary'}>
           <MarkdownView content={message.content} />
         </div>
 
         {/* Timestamp */}
         {message.timestamp && (
-          <p className={`text-xs mt-1.5 ${isUser ? 'text-blue-200' : 'text-gray-400'}`}>
+          <p className={`text-xs mt-1.5 ${isUser ? 'text-accent-primary/60' : 'text-text-muted'}`}>
             {new Date(message.timestamp).toLocaleTimeString('es-AR', {
               hour: '2-digit',
               minute: '2-digit',

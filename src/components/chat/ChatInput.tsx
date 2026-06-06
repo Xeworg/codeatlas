@@ -2,6 +2,7 @@
 // Part of PR5b (AI UI)
 
 import { useState } from 'react'
+import { Sparkles } from 'lucide-react'
 
 interface ChatInputProps {
   onSend: (message: string) => void
@@ -47,7 +48,7 @@ export function ChatInput({
             key={s}
             onClick={() => setValue(s)}
             disabled={disabled}
-            className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded border border-gray-200 hover:bg-gray-200 hover:text-gray-800 transition-colors disabled:opacity-50"
+            className="px-2 py-0.5 text-xs bg-surface-inset text-text-secondary rounded border border-border-subtle hover:bg-surface-hover hover:text-text-primary transition-colors disabled:opacity-50"
           >
             {s.length > 40 ? s.slice(0, 40) + '…' : s}
           </button>
@@ -63,20 +64,20 @@ export function ChatInput({
           placeholder={placeholder}
           disabled={disabled}
           rows={2}
-          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-400 placeholder:text-gray-400"
+          className="flex-1 px-3 py-2 text-sm bg-surface-inset text-text-primary border border-border-subtle rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-accent-primary focus:border-transparent disabled:bg-surface-base disabled:text-text-muted placeholder:text-text-muted"
           style={{ minHeight: '60px' }}
         />
         <button
           onClick={handleSend}
           disabled={disabled || !value.trim()}
-          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+          className="px-4 py-2 bg-accent-primary text-white text-sm font-medium rounded-lg hover:bg-accent-primary/80 active:bg-accent-primary/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
+          <Sparkles size={16} />
           <span>Enviar</span>
-          <span>→</span>
         </button>
       </div>
 
-      <p className="text-xs text-gray-400">Enter para enviar · Shift+Enter para nueva línea</p>
+      <p className="text-xs text-text-muted">Enter para enviar · Shift+Enter para nueva línea</p>
     </div>
   )
 }

@@ -2,6 +2,7 @@
 // Part of PR5b (AI UI)
 
 import { useState, useEffect } from 'react'
+import { Bot } from 'lucide-react'
 import { explainNode } from '../../lib/tauri-api'
 import { MarkdownView } from '../common/MarkdownView'
 import { Spinner } from '../common/Spinner'
@@ -79,8 +80,8 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
 
   if (!nodeId || !projectId) {
     return (
-      <div className="flex flex-col items-center justify-center h-48 text-gray-400">
-        <span className="text-2xl mb-2">🤖</span>
+      <div className="flex flex-col items-center justify-center h-48 text-text-muted">
+        <Bot size={28} className="mb-2 opacity-60" />
         <p className="text-sm text-center px-4">
           Seleccioná un nodo en el grafo para ver su explicación IA
         </p>
@@ -92,7 +93,7 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
     return (
       <div className="flex flex-col items-center justify-center h-48 gap-3">
         <Spinner size="md" />
-        <span className="text-xs text-gray-500">Analizando con IA...</span>
+        <span className="text-xs text-text-muted">Analizando con IA...</span>
       </div>
     )
   }
@@ -117,25 +118,25 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
       <div className="flex flex-col gap-4 p-4">
         {/* Header */}
         <div className="flex items-center gap-2">
-          <span className="text-xl">🤖</span>
+          <Bot size={18} className="text-text-muted" />
           <div>
-            <h3 className="text-sm font-semibold text-gray-800">Explicación IA</h3>
+            <h3 className="text-sm font-semibold text-text-primary">Explicación IA</h3>
             {nodeLabel && (
-              <p className="text-xs text-gray-500 truncate max-w-[200px]">{nodeLabel}</p>
+              <p className="text-xs text-text-muted truncate max-w-[200px]">{nodeLabel}</p>
             )}
           </div>
         </div>
 
         {/* Role badge */}
         {state.data.role && (
-          <span className="self-start px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full font-medium">
+          <span className="self-start px-2 py-0.5 bg-surface-inset text-accent-secondary text-xs rounded-full font-medium border border-border-subtle">
             {state.data.role}
           </span>
         )}
 
         {/* Summary */}
         <div>
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+          <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
             Resumen
           </h4>
           <MarkdownView content={state.data.summary} />
@@ -144,7 +145,7 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
         {/* Details */}
         {state.data.details && (
           <div>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+            <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
               Detalles
             </h4>
             <MarkdownView content={state.data.details} />
@@ -153,8 +154,8 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
 
         {/* Dependencies note */}
         {state.data.dependencies_note && (
-          <div className="border-t border-gray-100 pt-3">
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+          <div className="border-t border-border-subtle pt-3">
+            <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
               Dependencias
             </h4>
             <MarkdownView content={state.data.dependencies_note} />
@@ -162,8 +163,8 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
         )}
 
         {/* Quick prompts */}
-        <div className="border-t border-gray-100 pt-3">
-          <p className="text-xs text-gray-400 mb-2">Consultas rápidas:</p>
+        <div className="border-t border-border-subtle pt-3">
+          <p className="text-xs text-text-muted mb-2">Consultas rápidas:</p>
           <div className="flex flex-wrap gap-1">
             {QUICK_PROMPTS.map((prompt) => (
               <button
@@ -171,7 +172,7 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
                 onClick={() => {
                   /* pass to chat context */
                 }}
-                className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded border border-blue-100 hover:bg-blue-100 transition-colors"
+                className="px-2 py-1 text-xs bg-surface-elevated text-accent-primary rounded border border-border-subtle hover:bg-surface-hover transition-colors"
               >
                 {prompt}
               </button>

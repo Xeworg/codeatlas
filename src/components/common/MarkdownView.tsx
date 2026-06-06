@@ -22,11 +22,11 @@ function renderInlineMarkdown(text: string): string {
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(
       /`([^`]+)`/g,
-      '<code class="px-1 py-0.5 bg-gray-100 rounded text-sm font-mono text-purple-700">$1</code>'
+      '<code class="px-1 py-0.5 bg-surface-inset rounded text-sm font-mono text-accent-secondary">$1</code>'
     )
     .replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline hover:text-blue-800">$1</a>'
+      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-accent-primary underline hover:text-accent-secondary">$1</a>'
     )
 }
 
@@ -48,7 +48,7 @@ export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
   const flushBlockquote = () => {
     if (blockquoteLines.length > 0) {
       elements.push(
-        `<blockquote class="border-l-4 border-blue-300 pl-4 italic text-gray-600 my-2">${blockquoteLines.join(' ')}</blockquote>`
+        `<blockquote class="border-l-4 border-border-accent pl-4 italic text-text-secondary my-2">${blockquoteLines.join(' ')}</blockquote>`
       )
       blockquoteLines = []
     }
@@ -68,7 +68,7 @@ export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
         const lang = codeLines[0]?.trim() || ''
         const code = codeLines.slice(1).join('\n')
         elements.push(
-          `<pre class="bg-gray-900 text-gray-100 rounded-lg p-4 my-3 overflow-x-auto text-sm"><code class="${lang ? `language-${lang}` : ''}">${escapeHtml(code)}</code></pre>`
+          `<pre class="bg-surface-inset text-text-primary rounded-lg p-4 my-3 overflow-x-auto text-sm"><code class="${lang ? `language-${lang}` : ''}">${escapeHtml(code)}</code></pre>`
         )
         codeLines = []
         inCodeBlock = false
@@ -87,17 +87,17 @@ export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
     if (line.startsWith('### ')) {
       flushList()
       elements.push(
-        `<h3 class="text-base font-semibold mt-4 mb-2 text-gray-800">${renderInlineMarkdown(line.slice(4))}</h3>`
+        `<h3 class="text-base font-semibold mt-4 mb-2 text-text-primary">${renderInlineMarkdown(line.slice(4))}</h3>`
       )
     } else if (line.startsWith('## ')) {
       flushList()
       elements.push(
-        `<h2 class="text-lg font-bold mt-4 mb-2 text-gray-900">${renderInlineMarkdown(line.slice(3))}</h2>`
+        `<h2 class="text-lg font-bold mt-4 mb-2 text-text-primary">${renderInlineMarkdown(line.slice(3))}</h2>`
       )
     } else if (line.startsWith('# ')) {
       flushList()
       elements.push(
-        `<h1 class="text-xl font-bold mt-4 mb-2 text-gray-900">${renderInlineMarkdown(line.slice(2))}</h1>`
+        `<h1 class="text-xl font-bold mt-4 mb-2 text-text-primary">${renderInlineMarkdown(line.slice(2))}</h1>`
       )
     }
     // Blockquote
@@ -109,12 +109,12 @@ export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
     else if (/^[-*]\s/.test(line) || /^\d+\.\s/.test(line)) {
       flushBlockquote()
       const item = line.replace(/^[-*]\s/, '').replace(/^\d+\.\s/, '')
-      listItems.push(`<li class="text-gray-700">${renderInlineMarkdown(item)}</li>`)
+      listItems.push(`<li class="text-text-secondary">${renderInlineMarkdown(item)}</li>`)
     }
     // Horizontal rule
     else if (/^---+$/.test(line) || /^\*\*\*+$/.test(line)) {
       flushList()
-      elements.push('<hr class="my-4 border-gray-300" />')
+      elements.push('<hr class="my-4 border-border-subtle" />')
     }
     // Empty line
     else if (line.trim() === '') {
@@ -126,7 +126,7 @@ export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
       flushList()
       if (line.trim()) {
         elements.push(
-          `<p class="text-gray-700 my-2 leading-relaxed">${renderInlineMarkdown(line)}</p>`
+          `<p class="text-text-secondary my-2 leading-relaxed">${renderInlineMarkdown(line)}</p>`
         )
       }
     }
@@ -137,7 +137,7 @@ export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
 
   return (
     <div
-      className={`prose prose-sm max-w-none text-gray-700 ${className}`}
+      className={`prose prose-sm max-w-none text-text-secondary ${className}`}
       dangerouslySetInnerHTML={{ __html: elements.join('') }}
     />
   )

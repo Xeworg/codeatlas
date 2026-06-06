@@ -25,13 +25,13 @@ export function AppShell({
   rightPanel,
 }: AppShellProps) {
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-gray-100">
+    <div className="flex flex-col h-screen bg-surface-base text-text-primary">
       <TopBar projectName={projectName} status={status} onOpenProject={onOpenProject} />
       <div className="flex flex-1 overflow-hidden">
         {sidebar}
         <main className="flex-1 overflow-hidden relative">{children}</main>
         {rightPanel && (
-          <aside className="w-80 bg-gray-850 border-l border-gray-700 flex flex-col overflow-hidden">
+          <aside className="w-80 bg-surface-elevated border-l border-border-subtle flex flex-col overflow-hidden">
             {rightPanel}
           </aside>
         )}

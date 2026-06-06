@@ -2,6 +2,7 @@
 // Part of PR5b (AI UI)
 
 import { useState, useRef, useEffect } from 'react'
+import { MessageSquare } from 'lucide-react'
 import { chat } from '../../lib/tauri-api'
 import { ChatMessage } from './ChatMessage'
 import { ChatInput } from './ChatInput'
@@ -102,12 +103,12 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 bg-white sticky top-0 z-10">
-        <span className="text-lg">💬</span>
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-border-subtle bg-surface-elevated sticky top-0 z-10">
+        <MessageSquare size={18} className="text-text-muted" />
         <div>
-          <h2 className="text-sm font-semibold text-gray-800">Chat Contextual</h2>
+          <h2 className="text-sm font-semibold text-text-primary">Chat Contextual</h2>
           {contextNodeIds.length > 0 && (
-            <p className="text-xs text-gray-500">{contextNodeIds.length} nodo(s) en contexto</p>
+            <p className="text-xs text-text-muted">{contextNodeIds.length} nodo(s) en contexto</p>
           )}
         </div>
       </div>
@@ -115,10 +116,10 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400 py-8">
-            <span className="text-3xl mb-3">💬</span>
+          <div className="flex flex-col items-center justify-center h-full text-text-muted py-8">
+            <MessageSquare size={32} className="mb-3 text-text-muted opacity-60" />
             <p className="text-sm text-center px-4">Preguntá sobre cualquier parte del proyecto.</p>
-            <p className="text-xs text-gray-400 mt-1">Ejemplo: "¿Qué hace AuthService?"</p>
+            <p className="text-xs text-text-muted mt-1">Ejemplo: "¿Qué hace AuthService?"</p>
           </div>
         )}
 
@@ -127,7 +128,7 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
         ))}
 
         {status === 'sending' && (
-          <div className="flex items-center gap-2 text-gray-500">
+          <div className="flex items-center gap-2 text-text-muted">
             <Spinner size="sm" />
             <span className="text-xs">CodeAtlas está escribiendo...</span>
           </div>
@@ -143,11 +144,11 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
       </div>
 
       {/* Input */}
-      <div className="p-4 border-t border-gray-200 bg-gray-50">
+      <div className="p-4 border-t border-border-subtle bg-surface-inset">
         {projectId ? (
           <ChatInput onSend={handleSend} disabled={status === 'sending'} />
         ) : (
-          <div className="text-center text-sm text-gray-400 py-2">
+          <div className="text-center text-sm text-text-muted py-2">
             Abrí un proyecto para usar el chat
           </div>
         )}
