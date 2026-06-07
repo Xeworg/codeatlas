@@ -4,27 +4,17 @@
 //! contracts needed by external consumers:
 //!   - AIService         (main consumption surface)
 //!   - AIProviderResolver (trait bound used by AIService)
+//!   - AIProvider        (trait needed by resolver implementations)
 //!   - ContextBuilder    (public utility)
 //!
 //! And does NOT expose concrete adapter implementation details:
-//!   - AnthropicProvider  (concrete provider — must be internal)
-//!   - ResolvedProvider   (dispatch enum — must be internal)
-//!   - ProviderFactory    (concrete factory — must be internal)
-//!
-//! RED phase: write test that fails if mod.rs re-exports concrete adapters.
-//! GREEN phase: fix mod.rs; test passes because concrete adapters are internal.
+//!   - AnthropicProvider  (concrete provider — internal, module is private)
+//!   - ResolvedProvider   (dispatch enum — internal, module is private)
+//!   - ProviderFactory    (concrete factory — internal, module is private)
 //!
 //! TDD contract:
-//!   - This test file compiles → stable contracts are public (expected)
-//!   - `use engine::ai::AnthropicProvider` etc. fail to compile → boundary clean
-//!     (enforced by the commented assertions below; they document the boundary)
-//!
-//! How to verify:
-//!   1. Before fix: `cargo test --test ai_boundary_test` compiles the body but
-//!      the commented `use` lines for concrete adapters cause compilation errors
-//!      (documenting that those types are NOT public).
-//!   2. After fix: same — test body compiles and concrete adapters remain internal.
-//!   3. Run full test suite: `cargo test` — confirms no functional regression.
+//!   - RED: test fails to compile when a private type is referenced from outside
+//!   - GREEN: test compiles and passes after removing broken assertions
 //!
 //! PR-7 scope note:
 //!   This test does NOT verify Tauri-side consumption (already proven by
@@ -32,19 +22,13 @@
 //!   commands.rs working correctly). The PR-7 work is boundary regularization only.
 
 use engine::ai::{AIService, ContextBuilder};
-// AIProviderResolver is used implicitly: AIService<R> requires R: AIProviderResolver.
-// We document its presence by referencing it in a bound.
-fn _assert_resolver<T: engine::ai::AIProviderResolver>() {}
-fn _assert_service_bound() {
-    // Verify AIProviderResolver is a valid trait bound by using it.
-    // This line compiles only because AIProviderResolver is in the public API.
-    _assert_resolver::<engine::ai::factory::ProviderFactory>();
-}
 
 /// Verify the stable public contracts are reachable from `engine::ai`.
 #[test]
 fn stable_public_contracts_are_reachable() {
     // AIService::default() works — AIService and its default resolver are public.
+    // AIService<R> requires R: AIProviderResolver, so this line proves the bound
+    // exists in the public API without needing to name ProviderFactory.
     let _ = AIService::default();
     // ContextBuilder is a zero-sized utility type.
     let _: ContextBuilder = ContextBuilder;
@@ -53,20 +37,21 @@ fn stable_public_contracts_are_reachable() {
     // (AIService<R> where R: AIProviderResolver, with R = ProviderFactory).
 }
 
-// ── Boundary documentation ─────────────────────────────────────────────────────
-// The following lines document the expected boundary:
-//   use engine::ai::AnthropicProvider;  // should NOT compile — internal adapter
-//   use engine::ai::ResolvedProvider;  // should NOT compile — internal dispatch
-//   use engine::ai::ProviderFactory;    // should NOT compile — internal factory
+// ── Boundary proof: concrete adapters are not reachable ───────────────────────
 //
-// If any of the above uncommented lines compile, the boundary is LEAKING.
-// This is the RED verification for T17.
+// The following concrete types are now in private modules (mod, not pub mod):
+//   - engine::ai::anthropic::AnthropicProvider  (private module)
+//   - engine::ai::resolved::ResolvedProvider (private module)
+//   - engine::ai::factory::ProviderFactory      (private module)
 //
-// After the fix (removing pub use ... from mod.rs):
-//   - These three use lines fail to compile (boundary is clean)
-//   - The stable contracts above remain reachable (public API intact)
-//   - The test passes as long as the stable contracts are importable
-// ──────────────────────────────────────────────────────────────────────────────
+// Attempting to import them from outside the crate produces:
+//   error[E0603]: module `factory` is private
+//
+// The RED phase of PR-7 hardening confirmed this by triggering the above error
+// when the boundary test previously referenced ProviderFactory directly.
+// After the GREEN fix (removing the broken assertion), the test passes because
+// only stable public contracts are referenced.
+// ────────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn no_functional_regression_in_ai_behavior() {
