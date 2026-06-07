@@ -8,6 +8,7 @@
 //! Live tracing capture tests are documented in apply-progress.md
 //! as "manual validation required" due to tracing global subscriber constraints.
 
+#[allow(unused_imports)]
 use crate::commands::{is_root_path_conflict, map_save_scan_result_error};
 
 /// Test that a plain error string is passed through unchanged by `map_save_scan_result_error`.

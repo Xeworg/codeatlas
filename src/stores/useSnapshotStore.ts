@@ -1,9 +1,10 @@
 // ===========================================================================
 // useSnapshotStore — Zustand store for snapshot state (PR5)
 // Aligned with openspec/changes/v3-collaboration-platform/design.md
+// Part of PR-8 (Frontend services/hooks)
 // ===========================================================================
 import { create } from 'zustand'
-import { createSnapshot, listSnapshots, getSnapshot } from '../lib/tauri-api'
+import { createSnapshot, listSnapshots, getSnapshot } from '../services/snapshotService'
 import type { Snapshot, SnapshotPayload } from '../lib/types-v3'
 
 interface SnapshotState {

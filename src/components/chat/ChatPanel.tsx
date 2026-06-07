@@ -1,9 +1,9 @@
 // Chat panel — contextual AI chat with project context
-// Part of PR5b (AI UI)
+// Part of PR5b (AI UI), migrated to useAI hook in PR-8
 
 import { useState, useRef, useEffect } from 'react'
 import { Sparkles, MoreHorizontal, MessageSquare } from 'lucide-react'
-import { chat } from '../../lib/tauri-api'
+import { useAI } from '../../hooks/useAI'
 import { ChatMessage } from './ChatMessage'
 import { ChatInput } from './ChatInput'
 import { Spinner } from '../common/Spinner'
@@ -23,47 +23,23 @@ interface MessageState {
   timestamp: string
 }
 
-function getAIErrorMessage(err: Error): string {
-  const msg = err.message || ''
-  if (msg.includes('401') || msg.includes('InvalidApiKey') || msg.includes('invalid_api_key')) {
-    return 'Tu API key no es válida o no está configurada. Andá a Configuración para verificarla.'
-  }
-  if (msg.includes('429') || msg.includes('rate_limit') || msg.includes('RATE_LIMITED')) {
-    return 'Llegaste al límite de peticiones. Esperá unos segundos y probá de nuevo.'
-  }
-  if (msg.includes('timeout') || msg.includes('TIMEOUT') || msg.includes('Request timeout')) {
-    return 'La respuesta tardó demasiado. Probá con una pregunta más específica.'
-  }
-  if (msg.includes('ECONNREFUSED') || msg.includes('UNREACHABLE') || msg.includes('network')) {
-    return 'No se pudo conectar con el proveedor de IA. Verificá tu conexión.'
-  }
-  if (
-    msg.includes('TOKEN_LIMIT') ||
-    msg.includes('token_limit') ||
-    msg.includes('context_length')
-  ) {
-    return 'El contexto es demasiado largo. Intentá cerrar la conversación.'
-  }
-  return `Error de IA: ${msg.slice(0, 100)}`
-}
-
 export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanelProps) {
+  const { state: aiState, sendChat, isChatSending } = useAI()
   const [messages, setMessages] = useState<MessageState[]>([])
-  const [status, setStatus] = useState<'idle' | 'sending' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, status])
+  }, [messages, aiState.chat.status])
 
   const handleSend = async (content: string) => {
     if (!projectId) {
       setErrorMsg(t('chat.noProjectLoaded'))
       return
     }
-    if (status === 'sending') return
+    if (isChatSending || aiState.chat.status === 'sending') return
 
     const userMessage: MessageState = {
       id: `user-${Date.now()}`,
@@ -73,31 +49,32 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
     }
 
     setMessages((prev) => [...prev, userMessage])
-    setStatus('sending')
     setErrorMsg(null)
 
     try {
-      const response = await chat(projectId, content, messages, contextNodeIds)
+      const result = await sendChat({
+        projectId,
+        message: content,
+        history: messages,
+        contextNodeIds,
+      })
 
       const assistantMessage: MessageState = {
-        id: response.message.id || `assistant-${Date.now()}`,
-        role: response.message.role,
-        content: response.message.content,
-        timestamp: response.message.timestamp || new Date().toISOString(),
+        id: result.message.id || `assistant-${Date.now()}`,
+        role: result.message.role,
+        content: result.message.content,
+        timestamp: result.message.timestamp || new Date().toISOString(),
       }
-
       setMessages((prev) => [...prev, assistantMessage])
-      setStatus('idle')
     } catch (err) {
-      const msg = getAIErrorMessage(err as Error)
-      setStatus('error')
-      setErrorMsg(msg)
-      onError?.(msg)
+      // Catch the thrown error directly — no stale-state read needed
+      const errMsg = err instanceof Error ? err.message : 'Error de IA'
+      setErrorMsg(errMsg)
+      onError?.(errMsg)
     }
   }
 
   const handleRetry = () => {
-    setStatus('idle')
     setErrorMsg(null)
   }
 
@@ -130,14 +107,14 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
           <ChatMessage key={msg.id} message={msg} />
         ))}
 
-        {status === 'sending' && (
+        {(isChatSending || aiState.chat.status === 'sending') && (
           <div className="flex items-center gap-2 text-text-muted">
             <Spinner size="sm" />
             <span className="text-xs">{t('chat.writing')}</span>
           </div>
         )}
 
-        {status === 'error' && errorMsg && (
+        {aiState.chat.status === 'error' && errorMsg && (
           <div className="p-4">
             <ErrorState message={errorMsg} onRetry={handleRetry} />
           </div>
@@ -149,7 +126,10 @@ export function ChatPanel({ projectId, contextNodeIds = [], onError }: ChatPanel
       {/* Input */}
       <div className="p-4 border-t border-border-subtle bg-surface-inset flex-shrink-0">
         {projectId ? (
-          <ChatInput onSend={handleSend} disabled={status === 'sending'} />
+          <ChatInput
+            onSend={handleSend}
+            disabled={isChatSending || aiState.chat.status === 'sending'}
+          />
         ) : (
           <div className="text-center text-sm text-text-muted py-2">
             {t('chat.openProjectToChat')}

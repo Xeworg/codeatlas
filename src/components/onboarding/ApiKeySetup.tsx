@@ -1,8 +1,8 @@
 // API key setup onboarding screen
-// Part of PR5b (AI UI)
+// Part of PR5b (AI UI), migrated to useAIConfig hook in PR-8
 
 import { useState } from 'react'
-import { configureAI } from '../../lib/tauri-api'
+import { useAIConfig } from '../../hooks/useAIConfig'
 
 interface ApiKeySetupProps {
   onConfigured?: () => void
@@ -29,6 +29,7 @@ export function ApiKeySetup({ onConfigured, onSkip }: ApiKeySetupProps) {
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState(PROVIDER_OPTIONS[0].models[0])
   const [endpoint, setEndpoint] = useState('')
+  const { save, saving } = useAIConfig()
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -49,7 +50,7 @@ export function ApiKeySetup({ onConfigured, onSkip }: ApiKeySetupProps) {
     setErrorMsg('')
 
     try {
-      await configureAI({
+      await save({
         provider,
         api_key: trimmedKey,
         model,
@@ -57,9 +58,11 @@ export function ApiKeySetup({ onConfigured, onSkip }: ApiKeySetupProps) {
       })
       setStatus('success')
       onConfigured?.()
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Error al guardar la configuración.'
-      setErrorMsg(msg)
+    } catch (e) {
+      // Capture error locally — do NOT read hook state (stale-state race prevention)
+      // The hook's `error` may not have propagated to this render yet.
+      const msg = e instanceof Error ? e.message : String(e)
+      setErrorMsg(msg || 'Error al guardar la configuración.')
       setStatus('error')
     }
   }
@@ -174,10 +177,10 @@ export function ApiKeySetup({ onConfigured, onSkip }: ApiKeySetupProps) {
         <div className="flex gap-3 pt-2">
           <button
             onClick={handleSave}
-            disabled={status === 'saving'}
+            disabled={status === 'saving' || saving}
             className="flex-1 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {status === 'saving' ? 'Guardando...' : 'Guardar y continuar'}
+            {status === 'saving' || saving ? 'Guardando...' : 'Guardar y continuar'}
           </button>
           {onSkip && (
             <button

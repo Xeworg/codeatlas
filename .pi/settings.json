@@ -1,8 +1,11 @@
 {
 	"subagents": {
 		"agentOverrides": {
-			"context-builder": {
+			"scout": {
 				"model": "minimax/MiniMax-M3"
+			},
+			"worker": {
+				"model": "minimax/MiniMax-M2.7"
 			},
 			"delegate": {
 				"model": "minimax/MiniMax-M3"
@@ -11,18 +14,15 @@
 				"model": "minimax/MiniMax-M3"
 			},
 			"planner": {
-				"model": "opencode-go/deepseek-v4-pro"
+				"model": "opencode-go/kimi-k2.6"
 			},
 			"researcher": {
 				"model": "minimax/MiniMax-M3"
 			},
 			"reviewer": {
-				"model": "opencode-go/deepseek-v4-pro"
+				"model": "opencode-go/kimi-k2.6"
 			},
-			"scout": {
-				"model": "opencode-go/deepseek-v4-pro"
-			},
-			"worker": {
+			"context-builder": {
 				"model": "minimax/MiniMax-M3"
 			}
 		}

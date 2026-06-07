@@ -35,6 +35,8 @@ pub struct ScanFilesOutput {
     /// Cached outlines keyed by relative file path, derived from the same
     /// `ParseResult` as symbols and imports — no second parse required.
     pub outlines: HashMap<String, Vec<OutlineItem>>,
+    /// Time spent in FileWalker::discover() (ms).
+    pub discover_ms: u64,
     /// Time spent in the registry parse calls (ms).
     pub parse_ms: u64,
     /// How many times the registry was called (one per file + any gracefully
@@ -107,10 +109,21 @@ pub fn scan_files(
         file_infos,
         all_imports,
         outlines,
+        discover_ms: 0, // populated by caller via ScanFilesOutput::with_discover_ms
         parse_ms,
         registry_call_count,
         files_failed,
         files_read,
+    }
+}
+
+impl ScanFilesOutput {
+    /// Set the discover_ms field after construction.
+    /// This is needed because discover timing is measured by the caller
+    /// (FileWalker::discover) before scan_files() is called.
+    pub fn with_discover_ms(mut self, discover_ms: u64) -> Self {
+        self.discover_ms = discover_ms;
+        self
     }
 }
 

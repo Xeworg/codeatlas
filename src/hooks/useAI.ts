@@ -1,9 +1,10 @@
 // useAI hook — manages AI explanation and chat state
-// Part of PR5b (AI UI)
+// Part of PR5b (AI UI), migrated to services in PR-8
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import type { NodeExplanation, ChatResponse } from '../lib/types'
-import { explainNode, chat } from '../lib/tauri-api'
+import { toApiError, toUserMessage } from '../lib/tauri-api'
+import { explainNode, chat } from '../services/aiService'
 
 interface AIState {
   explanation: {
@@ -35,8 +36,18 @@ export function useAI() {
     chat: { status: 'idle' },
   })
 
+  // Shared stale-result guard at hook level — persists across explain() calls
+  // Each call gets a unique requestId; when a newer call starts, it marks
+  // the previous call's requestId as stale so that response is discarded.
+  const isStaleRef = useRef<{ requestId: number }>({ requestId: 0 })
+
   const explain = useCallback(async (options: ExplainOptions): Promise<NodeExplanation | null> => {
     const { nodeId, projectId } = options
+
+    // Increment requestId — this marks any previous in-flight requests as stale
+    const currentRequestId = isStaleRef.current.requestId + 1
+    isStaleRef.current = { requestId: currentRequestId }
+
     setState((prev) => ({
       ...prev,
       explanation: { status: 'loading' },
@@ -44,22 +55,30 @@ export function useAI() {
 
     try {
       const result = await explainNode(nodeId, projectId)
+
+      // Guard: if a newer request started, discard this stale response
+      if (isStaleRef.current.requestId !== currentRequestId) {
+        return null
+      }
+
       setState((prev) => ({
         ...prev,
         explanation: { status: 'ready', data: result },
       }))
       return result
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Error desconocido'
+      // Capture error locally — don't read hook state (stale-state race prevention)
+      const apiErr = toApiError(err, 'UNREACHABLE')
+      const userMsg = toUserMessage(apiErr)
       setState((prev) => ({
         ...prev,
-        explanation: { status: 'error', error: msg },
+        explanation: { status: 'error', error: userMsg },
       }))
       return null
     }
   }, [])
 
-  const sendChat = useCallback(async (options: ChatOptions): Promise<ChatResponse | null> => {
+  const sendChat = useCallback(async (options: ChatOptions): Promise<ChatResponse> => {
     const { projectId, message, history, contextNodeIds } = options
     setState((prev) => ({
       ...prev,
@@ -74,12 +93,15 @@ export function useAI() {
       }))
       return result
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Error desconocido'
+      // Capture error locally — don't read hook state (stale-state race prevention)
+      const apiErr = toApiError(err, 'UNREACHABLE')
+      const userMsg = toUserMessage(apiErr)
       setState((prev) => ({
         ...prev,
-        chat: { status: 'error', error: msg },
+        chat: { status: 'error', error: userMsg },
       }))
-      return null
+      // Throw so caller (ChatPanel) can catch it directly — no stale-state read needed
+      throw new Error(userMsg)
     }
   }, [])
 

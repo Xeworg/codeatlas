@@ -17,8 +17,81 @@ import type { ApiError, ErrorCode } from './types'
 
 // MARK: Error helpers
 
-function toApiError(err: unknown, fallbackCode: ErrorCode = 'INTERNAL'): ApiError {
-  const msg = err instanceof Error ? err.message : String(err)
+/**
+ * Backend-to-frontend error code mapping.
+ *
+ * The backend emits structured JSON with these codes:
+ * - PROJECT_NOT_FOUND -> PATH_NOT_FOUND
+ * - FILE_NOT_FOUND -> PATH_NOT_FOUND
+ * - AI_UNAVAILABLE -> UNREACHABLE
+ * - AI_RATE_LIMITED -> RATE_LIMITED
+ * - AI_TOKEN_LIMIT -> TOKEN_LIMIT
+ * - INVALID_API_KEY -> INVALID_KEY
+ * - ACCESS_DENIED -> ACCESS_DENIED
+ * - SCAN_TIMEOUT -> SCAN_TIMEOUT
+ * - DATABASE -> INTERNAL
+ * - INTERNAL -> INTERNAL
+ */
+const BACKEND_TO_FRONTEND_CODE: Record<string, ErrorCode> = {
+  PROJECT_NOT_FOUND: 'PATH_NOT_FOUND',
+  FILE_NOT_FOUND: 'PATH_NOT_FOUND',
+  AI_UNAVAILABLE: 'UNREACHABLE',
+  AI_RATE_LIMITED: 'RATE_LIMITED',
+  AI_TOKEN_LIMIT: 'TOKEN_LIMIT',
+  INVALID_API_KEY: 'INVALID_KEY',
+  ACCESS_DENIED: 'ACCESS_DENIED',
+  SCAN_TIMEOUT: 'SCAN_TIMEOUT',
+  DATABASE: 'INTERNAL',
+  INTERNAL: 'INTERNAL',
+}
+
+/**
+ * Convert any thrown error to a typed ApiError.
+ *
+ * This function implements the structured error contract:
+ * 1. Attempts to parse the error message as JSON with { code, message, details }
+ * 2. If successful and has valid code/message, maps backend code to frontend and returns
+ * 3. Falls back to legacy string heuristics for backward compatibility
+ *
+ * The details field is preserved as structured data (Record<string, unknown> | undefined).
+ */
+export function toApiError(err: unknown, fallbackCode: ErrorCode = 'INTERNAL'): ApiError {
+  const raw = err instanceof Error ? err.message : String(err)
+
+  // Strip Tauri "Error: " prefix before JSON parsing (Tauri wraps all errors)
+  const msg = raw.startsWith('Error: ') ? raw.slice(7) : raw
+
+  // Try to parse structured JSON from the error message first
+  try {
+    const parsed = JSON.parse(msg)
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'code' in parsed &&
+      'message' in parsed &&
+      typeof parsed.code === 'string' &&
+      typeof parsed.message === 'string'
+    ) {
+      const backendCode = parsed.code
+      const frontendCode = BACKEND_TO_FRONTEND_CODE[backendCode] ?? fallbackCode
+
+      // Preserve details as structured data, or undefined if null/missing
+      const details =
+        parsed.details && typeof parsed.details === 'object' && parsed.details !== null
+          ? (parsed.details as Record<string, unknown>)
+          : undefined
+
+      return {
+        code: frontendCode,
+        message: parsed.message,
+        ...(details !== undefined && { details }),
+      }
+    }
+  } catch {
+    // JSON parsing failed - fall through to legacy heuristics
+  }
+
+  // Legacy fallback: string-based pattern matching for backward compatibility
   let code: ErrorCode = fallbackCode
   if (msg.includes('ENOENT') || msg.includes('not found') || msg.includes('PATH_NOT_FOUND')) {
     code = 'PATH_NOT_FOUND'
@@ -50,6 +123,36 @@ function toApiError(err: unknown, fallbackCode: ErrorCode = 'INTERNAL'): ApiErro
     code = 'UNREACHABLE'
   }
   return { code, message: msg }
+}
+
+/**
+ * Translate an error code to a user-friendly Spanish message.
+ *
+ * Used by hooks and components to display localized, human-readable
+ * error messages instead of raw backend messages or error codes.
+ */
+export function toUserMessage(apiError: { code: ErrorCode; message?: string }): string {
+  switch (apiError.code) {
+    case 'INVALID_KEY':
+      return 'La clave de API no es válida. Verificá que esté correcta y no haya expirado.'
+    case 'RATE_LIMITED':
+      return 'Se excedió el límite de solicitudes. Esperá un momento antes de intentar de nuevo.'
+    case 'TOKEN_LIMIT':
+      return 'El contexto es demasiado largo para el modelo. Intentá con un nodo diferente.'
+    case 'UNREACHABLE':
+      return 'No se pudo conectar al proveedor de IA. Verificá tu conexión a internet.'
+    case 'PATH_NOT_FOUND':
+      return 'No se encontró el archivo o proyecto solicitado.'
+    case 'PROJECT_EXISTS':
+      return 'Ya existe un proyecto en esta ubicación.'
+    case 'ACCESS_DENIED':
+      return 'No tenés permisos para acceder a este recurso.'
+    case 'SCAN_TIMEOUT':
+      return 'El escaneo tardó demasiado y fue cancelado. Intentá con un proyecto más pequeño.'
+    case 'INTERNAL':
+    default:
+      return apiError.message || 'Ocurrió un error inesperado. Intentá de nuevo.'
+  }
 }
 
 /**

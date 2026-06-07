@@ -1,7 +1,7 @@
 ---
 name: sdd-apply
 description: Implement SDD tasks with strict TDD evidence and review workload guard.
-model: minimax/MiniMax-M3
+model: minimax/MiniMax-M2.7
 tools: read, grep, glob, edit, write, bash
 ---
 

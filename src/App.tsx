@@ -1,5 +1,6 @@
 // App — main entry, wires all panels together
 // Layout pass: assistant/AI moved to right panel; main stack simplified
+// Part of PR-8 (Frontend services/hooks): orchestration moved to hooks
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -19,17 +20,9 @@ import { ChatPanel } from './components/chat/ChatPanel'
 import { AnalyticsViewSelector, ArchitectureCard, ImpactPanel } from './components/analytics'
 import { useProjectStore, useScanStatus } from './stores/projectStore'
 import { useGraphStore, useSelectedNodeId } from './stores/graphStore'
-import {
-  scanProject,
-  openProjectByPath,
-  getGraph,
-  getErrorMessage,
-  getArchitectureDetection,
-  getImpactAnalysis,
-} from './lib/tauri-api'
-import { buildLayout } from './lib/graph-layout'
+import { useProject } from './hooks/useProject'
+import { useArchitecture } from './hooks/useArchitecture'
 import { V3_H1_ENABLED } from './stores/featureFlags'
-import type { ArchitectureDetectionResult, ImpactAnalysisResult, ScanResult } from './lib/types'
 
 type DetailTab = 'details' | 'impact'
 
@@ -47,140 +40,34 @@ function App() {
   const status = useScanStatus()
   const selectedNodeId = useSelectedNodeId()
   const projectId = useProjectStore((s) => s.projectId)
-  const { scanResult, projectName, error, setProject, setScanResult, setStatus, setError } =
-    useProjectStore()
-  const { selectNode, setGraphData, setLoading, graphData } = useGraphStore()
+  const { scanResult, projectName, error } = useProjectStore()
+  const { selectNode, graphData } = useGraphStore()
+  const { openProject } = useProject()
+  const { architectureDetection, impactAnalysis } = useArchitecture()
 
   const [scanStartTime, setScanStartTime] = useState<number | null>(null)
   const [detailTab, setDetailTab] = useState<DetailTab>('details')
 
-  // ── Analytics state ────────────────────────────────────────────────────
-  const [architectureDetection, setArchitectureDetection] =
-    useState<ArchitectureDetectionResult | null>(null)
-  const [impactAnalysis, setImpactAnalysis] = useState<ImpactAnalysisResult | null>(null)
-
-  // Track previous projectId to re-fetch analytics on project change
-  const prevProjectId = useRef<string | null>(null)
-
-  // ── Fetch architecture detection when project is ready ─────────────────
-  useEffect(() => {
-    if (!V3_H1_ENABLED) return
-    if (status !== 'ready' || !projectId) return
-    if (projectId === prevProjectId.current) return
-    prevProjectId.current = projectId
-
-    setArchitectureDetection(null)
-    getArchitectureDetection(projectId)
-      .then(setArchitectureDetection)
-      .catch(() => setArchitectureDetection(null))
-  }, [status, projectId])
-
-  // ── Fetch impact analysis when node is selected ────────────────────────
-  useEffect(() => {
-    if (!V3_H1_ENABLED) return
-    if (status !== 'ready' || !projectId || !selectedNodeId) {
-      setImpactAnalysis(null)
-      return
-    }
-
-    setImpactAnalysis(null)
-    getImpactAnalysis(projectId, selectedNodeId)
-      .then(setImpactAnalysis)
-      .catch(() => setImpactAnalysis(null))
-  }, [status, projectId, selectedNodeId])
-
   // Auto-select Impact tab when impact analysis arrives
-  useEffect(() => {
+  const prevImpactNode = useRef<string | null>(null)
+  const autoSelectImpact = useCallback(() => {
     if (impactAnalysis && selectedNodeId && V3_H1_ENABLED) {
-      setDetailTab('impact')
+      if (selectedNodeId !== prevImpactNode.current) {
+        prevImpactNode.current = selectedNodeId
+        setDetailTab('impact')
+      }
     }
   }, [impactAnalysis, selectedNodeId])
+  useEffect(() => {
+    autoSelectImpact()
+  }, [autoSelectImpact])
 
   const handleOpenProject = useCallback(async () => {
-    try {
-      const selected = await open({ directory: true, multiple: false })
-      if (!selected) return
-
-      const path = selected as string
-      const name = path.split('/').pop() ?? 'Project'
-
-      // Reset analytics state for new/reopened project
-      setArchitectureDetection(null)
-      setImpactAnalysis(null)
-      prevProjectId.current = null
-      setLoading(true)
-      setScanStartTime(Date.now())
-
-      // Step 1: Try to reopen an already-indexed project (no re-scan needed)
-      let reopenResult: ScanResult | null = null
-      try {
-        reopenResult = await openProjectByPath(path)
-      } catch (reopenErr) {
-        const reopenErrMsg = getErrorMessage(reopenErr)
-        if (!reopenErrMsg.includes('No project found')) {
-          setError(reopenErrMsg)
-          setLoading(false)
-          return
-        }
-      }
-
-      if (reopenResult) {
-        setScanResult(reopenResult)
-        setStatus(reopenResult.status)
-        if (reopenResult.projectId) {
-          setProject(
-            reopenResult.projectId,
-            reopenResult.projectName || name,
-            reopenResult.rootPath || path
-          )
-        }
-        if (reopenResult.status === 'ready' && reopenResult.projectId) {
-          try {
-            const graph = await getGraph(reopenResult.projectId)
-            const laid = buildLayout(graph)
-            setGraphData(laid)
-          } catch (graphErr) {
-            setError(`Graph load failed: ${getErrorMessage(graphErr)}`)
-            setLoading(false)
-            return
-          }
-        }
-        setLoading(false)
-        return
-      }
-
-      // Step 2: Fresh scan for paths not yet indexed
-      setProject(`proj-${Date.now()}`, name, path)
-      setStatus('scanning')
-
-      const result = await scanProject(path)
-      setScanResult(result)
-      setStatus(result.status)
-
-      if (result.projectId) {
-        setProject(result.projectId, result.projectName || name, result.rootPath || path)
-      }
-
-      if (result.status === 'ready' && result.projectId) {
-        setLoading(true)
-        try {
-          const graph = await getGraph(result.projectId)
-          const laid = buildLayout(graph)
-          setGraphData(laid)
-        } catch (e) {
-          const msg = getErrorMessage(e)
-          setError(`Graph load failed: ${msg}`)
-        } finally {
-          setLoading(false)
-        }
-      } else {
-        setLoading(false)
-      }
-    } catch (err) {
-      setError(getErrorMessage(err))
-      setLoading(false)
-    }
-  }, [setProject, setStatus, setScanResult, setError, setGraphData, setLoading])
+    const selected = await open({ directory: true, multiple: false })
+    if (!selected) return
+    setScanStartTime(Date.now())
+    await openProject(selected as string)
+  }, [openProject])
 
   const handleSelectFile = useCallback(
     (fileId: string) => {

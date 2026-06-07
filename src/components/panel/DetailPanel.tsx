@@ -1,9 +1,9 @@
 // DetailPanel — shows metadata of selected node
-import { useEffect, useState } from 'react'
+// Part of PR-8 (Frontend services/hooks)
 import { t } from '../../lib/i18n'
 import { useSelectedNodeId, useGraphData } from '../../stores/graphStore'
-import { getNodeDetails, getNodeOutline } from '../../lib/tauri-api'
-import type { FileInfo, OutlineItem } from '../../lib/types'
+import { useNodeDetails } from '../../hooks/useNodeDetails'
+import { useNodeOutline } from '../../hooks/useNodeOutline'
 import { SymbolList } from './SymbolList'
 import { OutlineView } from './OutlineView'
 import { ListTree, Link, Code, CornerDownRight } from 'lucide-react'
@@ -11,41 +11,8 @@ import { ListTree, Link, Code, CornerDownRight } from 'lucide-react'
 export function DetailPanel() {
   const selectedNodeId = useSelectedNodeId()
   const graphData = useGraphData()
-  const [details, setDetails] = useState<FileInfo | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const [outline, setOutline] = useState<OutlineItem[]>([])
-  const [outlineLoading, setOutlineLoading] = useState(false)
-  const [outlineError, setOutlineError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!selectedNodeId) {
-      setDetails(null)
-      return
-    }
-    setLoading(true)
-    setError(null)
-    getNodeDetails(selectedNodeId)
-      .then(setDetails)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false))
-  }, [selectedNodeId])
-
-  // Load outline independently
-  useEffect(() => {
-    if (!selectedNodeId) {
-      setOutline([])
-      setOutlineError(null)
-      return
-    }
-    setOutlineLoading(true)
-    setOutlineError(null)
-    getNodeOutline(selectedNodeId)
-      .then(setOutline)
-      .catch((e) => setOutlineError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setOutlineLoading(false))
-  }, [selectedNodeId])
+  const { details, loading, error } = useNodeDetails(selectedNodeId)
+  const { outline, loading: outlineLoading, error: outlineError } = useNodeOutline(selectedNodeId)
 
   if (!selectedNodeId) {
     return (
