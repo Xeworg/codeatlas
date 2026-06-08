@@ -21,12 +21,35 @@ use std::{
 };
 use tauri::State;
 
-// Global state
-//
-// All mutable fields use Arc<Mutex<T>> so that commands can construct an
-// AppStatePortAdapter via Arc::clone() that shares ownership with this state.
-// This is critical: if these were plain Mutex<T> fields, the adapter would
-// receive independent copies that mutate dead state.
+// ─── Global state ──────────────────────────────────────────────────────────
+
+/// Tauri-managed global state, accessible to every command via
+/// `tauri::State<'_, AppState>`.
+///
+/// All mutable fields use `Arc<Mutex<T>>` rather than plain `Mutex<T>` so
+/// that the `AppStatePortAdapter` (which lives in the `engine` crate) can
+/// hold `Arc::clone()` references to the SAME mutexes this struct owns.
+/// Mutations through the adapter are therefore immediately visible to
+/// the original `AppState` — no copies, no dead state. If these fields
+/// were plain `Mutex<T>`, the adapter would receive independent copies
+/// that mutate unreachable state and reads would silently diverge.
+///
+/// Lifetime contract:
+/// - The `Arc` instances are created exactly once in `lib.rs::run()` and
+///   live for the entire application lifetime.
+/// - The `AppState` itself is moved into Tauri's `State` and shared with
+///   every command invocation; commands MUST hold the lock only for the
+///   duration of their work and MUST NOT store the lock guard.
+/// - `Send + Sync` is auto-derived: every `T` stored in a `Mutex<T>` is
+///   required to be `Send`, and `Arc<Mutex<T>>: Send + Sync` whenever
+///   `T: Send`. No `unsafe impl` is needed and none is used.
+///
+/// Two fields are intentionally NOT behind `Arc<Mutex<...>>`:
+/// - `db: DbPool` is itself a clonable handle to the SQLite pool.
+/// - `ai_service: engine::ai::AIService` is a stateless service that
+///   takes its mutable collaborator (`ai_config`) through the adapter
+///   port. PR-B of the pre-wave-2-foundation change replaces both
+///   concrete fields with `Arc<dyn ...>` port references.
 pub struct AppState {
     pub db: DbPool,
     pub scan_status: Arc<Mutex<ScanStatus>>,
