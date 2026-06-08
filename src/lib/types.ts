@@ -123,10 +123,10 @@ export interface GraphData {
 }
 
 export interface NodeExplanation {
-  node_id: string
+  nodeId: string
   summary: string
   details: string
-  dependencies_note?: string
+  dependenciesNote?: string
   role: string
 }
 
