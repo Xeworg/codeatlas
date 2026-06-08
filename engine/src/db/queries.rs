@@ -17,8 +17,10 @@ impl DbPool {
         Ok(Self(Mutex::new(conn)))
     }
 
-    /// Open an in-memory database (for tests).
-    #[cfg(test)]
+    /// Open an in-memory database.
+    ///
+    /// Intended for tests and scenarios where ephemeral storage is preferred.
+    /// Also available to integration tests in `tests/` via the `engine` crate.
     pub fn in_memory() -> SqliteResult<Self> {
         let conn = Connection::open_in_memory()?;
         Ok(Self(Mutex::new(conn)))

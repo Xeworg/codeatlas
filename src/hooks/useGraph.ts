@@ -1,7 +1,8 @@
 // useGraph — hook for graph data, selection and search
+// Part of PR-8 (Frontend services/hooks)
 import { useCallback } from 'react'
 import { useGraphStore } from '../stores/graphStore'
-import { getGraph, searchNodes } from '../lib/tauri-api'
+import { getGraph, searchNodes } from '../services/graphService'
 import { buildLayout } from '../lib/graph-layout'
 import { useProjectId } from '../stores/projectStore'
 

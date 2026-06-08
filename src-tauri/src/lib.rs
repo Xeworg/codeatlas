@@ -47,9 +47,10 @@ pub fn run() {
 
             let app_state = AppState {
                 db: db_pool,
-                scan_status: Mutex::new(commands::ScanStatus::Idle),
-                ai_config: Mutex::new(None),
-                project_root: Mutex::new(String::new()),
+                scan_status: std::sync::Arc::new(Mutex::new(engine::models::ScanStatus::Idle)),
+                ai_config: std::sync::Arc::new(Mutex::new(None)),
+                project_root: std::sync::Arc::new(Mutex::new(String::new())),
+                ai_service: engine::ai::AIService::default(),
             };
 
             app.manage(app_state);

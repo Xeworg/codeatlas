@@ -9,8 +9,11 @@ pub mod commands;
 pub mod db;
 pub mod graph;
 pub mod models;
+pub mod ports;
 pub mod scanner;
+pub mod services;
 
+pub use db::queries::{C4View, ExecutiveSummary, SnapshotDiff};
 pub use models::{FileInfo, GraphData, NodeType, ScanResult, ScanStatus};
 pub use thiserror::Error;
 
@@ -52,11 +55,97 @@ pub enum AppError {
     Internal(String),
 }
 
+/// Structured error payload for IPC transport.
+///
+/// This JSON structure is serialized as a STRING when crossing the Tauri IPC
+/// boundary because Tauri error channel is string-oriented.
+///
+/// Backend-to-frontend error code mapping:
+/// - PROJECT_NOT_FOUND -> PATH_NOT_FOUND
+/// - FILE_NOT_FOUND -> PATH_NOT_FOUND
+/// - AI_UNAVAILABLE -> UNREACHABLE
+/// - AI_RATE_LIMITED -> RATE_LIMITED
+/// - AI_TOKEN_LIMIT -> TOKEN_LIMIT
+/// - INVALID_API_KEY -> INVALID_KEY
+/// - ACCESS_DENIED -> ACCESS_DENIED
+/// - SCAN_TIMEOUT -> SCAN_TIMEOUT
+/// - DATABASE -> INTERNAL
+/// - INTERNAL -> INTERNAL
+#[derive(Debug, serde::Serialize)]
+pub struct IpcErrorPayload {
+    pub code: &'static str,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+}
+
 impl serde::Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        let payload = match self {
+            AppError::ProjectNotFound(path) => IpcErrorPayload {
+                code: "PROJECT_NOT_FOUND",
+                message: format!("Project not found: {}", path),
+                details: Some(serde_json::json!({ "path": path })),
+            },
+            AppError::FileNotFound(path) => IpcErrorPayload {
+                code: "FILE_NOT_FOUND",
+                message: format!("File not found: {}", path),
+                details: Some(serde_json::json!({ "path": path })),
+            },
+            AppError::ScanTimeout {
+                files_processed,
+                total_files,
+            } => IpcErrorPayload {
+                code: "SCAN_TIMEOUT",
+                message: format!(
+                    "Scan timeout: processed {}/{}",
+                    files_processed, total_files
+                ),
+                details: Some(serde_json::json!({
+                    "files_processed": files_processed,
+                    "total_files": total_files
+                })),
+            },
+            AppError::Database(msg) => IpcErrorPayload {
+                code: "DATABASE",
+                message: format!("Database error: {}", msg),
+                details: Some(serde_json::json!({ "reason": msg })),
+            },
+            AppError::AIUnavailable(msg) => IpcErrorPayload {
+                code: "AI_UNAVAILABLE",
+                message: format!("AI unavailable: {}", msg),
+                details: Some(serde_json::json!({ "reason": msg })),
+            },
+            AppError::AIRateLimited => IpcErrorPayload {
+                code: "AI_RATE_LIMITED",
+                message: self.to_string(),
+                details: None,
+            },
+            AppError::AITokenLimit => IpcErrorPayload {
+                code: "AI_TOKEN_LIMIT",
+                message: self.to_string(),
+                details: None,
+            },
+            AppError::InvalidApiKey => IpcErrorPayload {
+                code: "INVALID_API_KEY",
+                message: self.to_string(),
+                details: None,
+            },
+            AppError::AccessDenied(resource) => IpcErrorPayload {
+                code: "ACCESS_DENIED",
+                message: format!("Access denied: {}", resource),
+                details: Some(serde_json::json!({ "resource": resource })),
+            },
+            AppError::Internal(msg) => IpcErrorPayload {
+                code: "INTERNAL",
+                message: format!("Internal error: {}", msg),
+                details: Some(serde_json::json!({ "reason": msg })),
+            },
+        };
+
+        payload.serialize(serializer)
     }
 }

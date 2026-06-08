@@ -3,9 +3,90 @@
 // TDD Phase: RED — tests written to define expected behavior before implementation.
 // Run: npm run test -- --run src-tauri/tests/pr5-snapshot-roundtrip.test.ts
 // ===========================================================================
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import type { Snapshot, SnapshotPayload } from '../../src/lib/types-v3'
+
+const pr5State = vi.hoisted(() => ({
+  snapshotCounter: 2,
+  snapshots: [
+    {
+      id: 'seed-ws-1',
+      projectId: 'test-proj',
+      workspaceId: 'ws-1',
+      label: 'Seed ws-1',
+      createdAt: new Date().toISOString(),
+      payloadJson: JSON.stringify({ nodes: [{ id: 'n1' }], edges: [] }),
+    },
+    {
+      id: 'seed-ws-2',
+      projectId: 'test-proj',
+      workspaceId: 'ws-2',
+      label: 'Seed ws-2',
+      createdAt: new Date().toISOString(),
+      payloadJson: JSON.stringify({ nodes: [{ id: 'n2' }], edges: [] }),
+    },
+  ] as Array<{
+    id: string
+    projectId: string
+    workspaceId?: string
+    label: string
+    createdAt: string
+    payloadJson?: string
+  }>,
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(async (command: string, args?: Record<string, unknown>) => {
+    switch (command) {
+      case 'create_snapshot': {
+        const snapshot = {
+          id: `snap-${++pr5State.snapshotCounter}`,
+          projectId: String(args?.projectId ?? ''),
+          workspaceId: typeof args?.workspaceId === 'string' ? String(args.workspaceId) : undefined,
+          label: String(args?.label ?? ''),
+          createdAt: new Date().toISOString(),
+          payloadJson: JSON.stringify({
+            nodes: [],
+            edges: [],
+            insights: null,
+            architectureDetection: null,
+          }),
+        }
+        pr5State.snapshots.push(snapshot)
+        return snapshot
+      }
+
+      case 'list_snapshots':
+        return pr5State.snapshots.filter((snapshot) => {
+          if (snapshot.projectId !== String(args?.projectId ?? '')) {
+            return false
+          }
+          if (typeof args?.workspaceId === 'string') {
+            return snapshot.workspaceId === String(args.workspaceId)
+          }
+          return true
+        })
+
+      case 'get_snapshot': {
+        const snapshotId = String(args?.snapshotId ?? '')
+        const projectId = String(args?.projectId ?? '')
+        const snapshot = pr5State.snapshots.find(
+          (candidate) => candidate.id === snapshotId && candidate.projectId === projectId
+        )
+
+        if (!snapshot) {
+          throw new Error('SNAPSHOT_NOT_FOUND')
+        }
+
+        return snapshot
+      }
+
+      default:
+        throw new Error(`Unmocked Tauri command: ${command}`)
+    }
+  }),
+}))
 
 // T5.6 — Backend roundtrip: create → list → get → payload complete
 describe('Snapshot backend roundtrip (T5.6)', () => {
@@ -39,6 +120,7 @@ describe('Snapshot backend roundtrip (T5.6)', () => {
       projectId: 'test-proj',
       workspaceId: 'ws-1',
     })
+    expect(snaps.length).toBeGreaterThan(0)
     snaps.forEach((s) => expect(s.workspaceId).toBe('ws-1'))
   })
 
@@ -47,7 +129,6 @@ describe('Snapshot backend roundtrip (T5.6)', () => {
     const snap = await invoke<Snapshot>('create_snapshot', {
       projectId: 'test-proj',
       label: 'With Workspace',
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       workspaceId: 'ws-test',
     })
     expect(snap.workspaceId).toBe('ws-test')

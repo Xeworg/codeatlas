@@ -1,9 +1,21 @@
 //! Anthropic AI provider implementation.
 
 use crate::ai::AIProvider;
-use crate::models::{ChatMessage, ChatResponse, ChatRole, NodeExplanation};
+use crate::models::{AIConfig, ChatMessage, ChatResponse, ChatRole, NodeExplanation};
 use crate::{AppError, Result};
 
+const DEFAULT_ANTHROPIC_ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
+
+fn map_error_response(status: u16, body: &str) -> AppError {
+    match status {
+        401 | 403 => AppError::InvalidApiKey,
+        429 => AppError::AIRateLimited,
+        400 if body.contains("token") => AppError::AITokenLimit,
+        _ => AppError::AIUnavailable(format!("HTTP {}", status)),
+    }
+}
+
+#[derive(Debug)]
 pub struct AnthropicProvider {
     api_key: String,
     model: String,
@@ -12,11 +24,31 @@ pub struct AnthropicProvider {
 
 impl AnthropicProvider {
     pub fn new(api_key: impl Into<String>, model: Option<&str>) -> Self {
+        Self::with_endpoint(api_key, model, None)
+    }
+
+    pub fn with_endpoint(
+        api_key: impl Into<String>,
+        model: Option<&str>,
+        endpoint: Option<&str>,
+    ) -> Self {
         Self {
             api_key: api_key.into(),
             model: model.unwrap_or("minimax").to_string(),
-            endpoint: "https://api.anthropic.com/v1/messages".to_string(),
+            // Guard: empty string falls back to default instead of using an empty URL.
+            endpoint: endpoint
+                .filter(|s| !s.is_empty())
+                .unwrap_or(DEFAULT_ANTHROPIC_ENDPOINT)
+                .to_string(),
         }
+    }
+
+    pub fn from_config(config: &AIConfig) -> Self {
+        Self::with_endpoint(
+            config.api_key.clone(),
+            Some(config.model.as_str()),
+            config.endpoint.as_deref(),
+        )
     }
 
     async fn request(&self, prompt: &str) -> Result<String> {
@@ -42,15 +74,9 @@ impl AnthropicProvider {
             .map_err(|e| AppError::AIUnavailable(e.to_string()))?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            return Err(match status.as_u16() {
-                401 | 403 => AppError::InvalidApiKey,
-                429 => AppError::AIRateLimited,
-                400 if response.text().await.unwrap_or_default().contains("token") => {
-                    AppError::AITokenLimit
-                }
-                _ => AppError::AIUnavailable(format!("HTTP {}", status)),
-            });
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(map_error_response(status, &body));
         }
 
         #[derive(serde::Deserialize)]
@@ -136,54 +162,60 @@ mod tests {
 
     #[test]
     fn provider_creation() {
-        let provider = AnthropicProvider::new("test-key", Some("claude-3"));
+        let provider = AnthropicProvider::new("placeholder", Some("claude-3"));
         assert_eq!(provider.model, "claude-3");
+        assert_eq!(provider.endpoint, DEFAULT_ANTHROPIC_ENDPOINT);
     }
 
-    /// Verifies the HTTP status → AppError mapping table without a live server.
-    /// Each arm of the match in request() maps one status to one variant.
+    #[test]
+    fn provider_creation_with_custom_endpoint() {
+        let provider = AnthropicProvider::with_endpoint(
+            "placeholder",
+            Some("claude-3"),
+            Some("https://gateway.example.test/v1/messages"),
+        );
+
+        assert_eq!(
+            provider.endpoint,
+            "https://gateway.example.test/v1/messages"
+        );
+    }
+
     #[test]
     fn error_mapping_invalid_api_key() {
-        let err = map_status_for_test(401);
+        let err = map_error_response(401, "unauthorized");
+        assert!(matches!(err, AppError::InvalidApiKey));
+    }
+
+    #[test]
+    fn error_mapping_403_forbidden() {
+        // 403 should also map to InvalidApiKey (forbidden != unauthorized)
+        let err = map_error_response(403, "access forbidden");
         assert!(matches!(err, AppError::InvalidApiKey));
     }
 
     #[test]
     fn error_mapping_rate_limited() {
-        let err = map_status_for_test(429);
+        let err = map_error_response(429, "rate limited");
         assert!(matches!(err, AppError::AIRateLimited));
     }
 
     #[test]
     fn error_mapping_token_limit() {
-        let err = map_status_for_test(400);
-        let body = "maximum_token_limit_exceeded";
-        let err = refine_if_token_error(err, body);
+        let err = map_error_response(400, "maximum_token_limit_exceeded");
         assert!(matches!(err, AppError::AITokenLimit));
     }
 
     #[test]
-    fn error_mapping_server_error() {
-        let err = map_status_for_test(500);
+    fn error_mapping_400_without_token_keyword() {
+        // 400 without "token" in body should map to AIUnavailable, not AITokenLimit
+        let err = map_error_response(400, "bad_request");
         assert!(matches!(err, AppError::AIUnavailable(_)));
     }
 
-    /// Mirrors the status→AppError branching logic in request().
-    /// Any change to that match must be reflected here.
-    fn map_status_for_test(status: u16) -> AppError {
-        match status {
-            401 | 403 => AppError::InvalidApiKey,
-            429 => AppError::AIRateLimited,
-            400 => AppError::AITokenLimit, // conservative: 400 always token issue
-            _ => AppError::AIUnavailable(format!("HTTP {}", status)),
-        }
-    }
-
-    fn refine_if_token_error(err: AppError, body: &str) -> AppError {
-        if body.contains("token") && matches!(err, AppError::AITokenLimit) {
-            AppError::AITokenLimit
-        } else {
-            AppError::AIUnavailable(format!("HTTP 400 {}", body))
-        }
+    #[test]
+    fn error_mapping_server_error() {
+        let err = map_error_response(500, "server error");
+        assert!(matches!(err, AppError::AIUnavailable(_)));
     }
 }

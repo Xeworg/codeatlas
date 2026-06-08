@@ -1,9 +1,9 @@
 // AI Explanation panel — shows AI summary for selected node
-// Part of PR5b (AI UI)
+// Part of PR5b (AI UI), migrated to useAI hook in PR-8
 
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import { Bot } from 'lucide-react'
-import { explainNode } from '../../lib/tauri-api'
+import { useAI } from '../../hooks/useAI'
 import { MarkdownView } from '../common/MarkdownView'
 import { Spinner } from '../common/Spinner'
 import { ErrorState } from '../common/ErrorState'
@@ -14,17 +14,6 @@ interface AIExplanationProps {
   nodeLabel?: string
 }
 
-interface ExplanationState {
-  status: 'idle' | 'loading' | 'ready' | 'error'
-  data?: {
-    summary: string
-    details: string
-    dependencies_note?: string
-    role: string
-  }
-  error?: string
-}
-
 const QUICK_PROMPTS = [
   '¿Qué hace este componente?',
   'Muestra sus dependencias',
@@ -32,51 +21,13 @@ const QUICK_PROMPTS = [
 ]
 
 export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationProps) {
-  const [state, setState] = useState<ExplanationState>({ status: 'idle' })
+  const { state: aiState, explain, isExplanationLoading } = useAI()
 
   useEffect(() => {
-    if (!nodeId || !projectId) {
-      setState({ status: 'idle' })
-      return
-    }
+    if (!nodeId || !projectId) return
 
-    let cancelled = false
-    setState({ status: 'loading' })
-
-    explainNode(nodeId, projectId)
-      .then((result) => {
-        if (!cancelled) {
-          setState({
-            status: 'ready',
-            data: {
-              summary: result.summary,
-              details: result.details,
-              dependencies_note: result.dependencies_note,
-              role: result.role,
-            },
-          })
-        }
-      })
-      .catch((err: Error) => {
-        if (!cancelled) {
-          let msg = err.message || 'Error desconocido'
-          if (msg.includes('401') || msg.includes('InvalidApiKey')) {
-            msg = 'API key inválida o no configurada. Revisa Configuración.'
-          } else if (msg.includes('429') || msg.includes('rate_limit')) {
-            msg = 'Límite de peticiones alcanzado. Esperá unos segundos.'
-          } else if (msg.includes('timeout') || msg.includes('TIMEOUT')) {
-            msg = 'La respuesta tardó demasiado. Probá de nuevo.'
-          } else if (msg.includes('ECONNREFUSED') || msg.includes('UNREACHABLE')) {
-            msg = 'No se pudo conectar al proveedor de IA.'
-          }
-          setState({ status: 'error', error: msg })
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [nodeId, projectId])
+    explain({ nodeId, projectId })
+  }, [nodeId, projectId, explain])
 
   if (!nodeId || !projectId) {
     return (
@@ -89,7 +40,7 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
     )
   }
 
-  if (state.status === 'loading') {
+  if (isExplanationLoading || aiState.explanation.status === 'loading') {
     return (
       <div className="flex flex-col items-center justify-center h-48 gap-3">
         <Spinner size="md" />
@@ -98,14 +49,14 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
     )
   }
 
-  if (state.status === 'error') {
+  if (aiState.explanation.status === 'error') {
     return (
       <div className="p-4">
         <ErrorState
-          message={state.error || 'Ocurrió un error al obtener la explicación.'}
+          message={aiState.explanation.error || 'Ocurrió un error al obtener la explicación.'}
           onRetry={() => {
             if (nodeId && projectId) {
-              setState({ status: 'loading' })
+              explain({ nodeId, projectId })
             }
           }}
         />
@@ -113,7 +64,8 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
     )
   }
 
-  if (state.status === 'ready' && state.data) {
+  if (aiState.explanation.status === 'ready' && aiState.explanation.data) {
+    const { data } = aiState.explanation
     return (
       <div className="flex flex-col gap-4 p-4">
         {/* Header */}
@@ -128,9 +80,9 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
         </div>
 
         {/* Role badge */}
-        {state.data.role && (
+        {data.role && (
           <span className="self-start px-2 py-0.5 bg-surface-inset text-accent-secondary text-xs rounded-full font-medium border border-border-subtle">
-            {state.data.role}
+            {data.role}
           </span>
         )}
 
@@ -139,26 +91,26 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
           <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
             Resumen
           </h4>
-          <MarkdownView content={state.data.summary} />
+          <MarkdownView content={data.summary} />
         </div>
 
         {/* Details */}
-        {state.data.details && (
+        {data.details && (
           <div>
             <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
               Detalles
             </h4>
-            <MarkdownView content={state.data.details} />
+            <MarkdownView content={data.details} />
           </div>
         )}
 
         {/* Dependencies note */}
-        {state.data.dependencies_note && (
+        {data.dependencies_note && (
           <div className="border-t border-border-subtle pt-3">
             <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
               Dependencias
             </h4>
-            <MarkdownView content={state.data.dependencies_note} />
+            <MarkdownView content={data.dependencies_note} />
           </div>
         )}
 
