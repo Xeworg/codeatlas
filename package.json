@@ -10,6 +10,8 @@
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "format": "prettier --write src",
     "typecheck": "tsc --noEmit",
+    "check:arch": "node scripts/ci/check-architecture.mjs",
+    "check:arch:test": "node scripts/ci/check-architecture.mjs --self-test",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepare": "husky install"
