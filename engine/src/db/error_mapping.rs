@@ -31,11 +31,7 @@ pub fn is_root_path_conflict(err: &str) -> bool {
 /// errors are returned unchanged so callers can add operation-specific
 /// ERROR context.
 #[allow(dead_code)]
-pub fn map_save_scan_result_error(
-    err: &str,
-    root_path: &str,
-    project_id: &str,
-) -> String {
+pub fn map_save_scan_result_error(err: &str, root_path: &str, project_id: &str) -> String {
     if is_root_path_conflict(err) {
         tracing::warn!(
             project_id = %project_id,
