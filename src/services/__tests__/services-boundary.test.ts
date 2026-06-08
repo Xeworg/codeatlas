@@ -165,7 +165,7 @@ describe('T19 RED — Service contracts', () => {
   describe('aiService contract (will delegate to tauri-api)', () => {
     it('explainNode wraps tauri-api explainNode', async () => {
       const mockExplanation = {
-        node_id: 'n1',
+        nodeId: 'n1',
         summary: 'Test summary',
         details: 'Test details',
         role: 'component',
@@ -302,7 +302,7 @@ describe('T19 RED — Hook contracts', () => {
   describe('useAI contract (existing hook should delegate to services)', () => {
     it('explain calls tauri-api explainNode', async () => {
       const mockExplanation = {
-        node_id: 'n1',
+        nodeId: 'n1',
         summary: 'Test',
         details: 'Details',
         role: 'component',
@@ -401,7 +401,7 @@ describe('T19 RED — Component boundary verification', () => {
 
   it('AI mock is ready for use by migrated components', async () => {
     const mockExplanation = {
-      node_id: 'n1',
+      nodeId: 'n1',
       summary: 'Test',
       details: 'Details',
       role: 'component',

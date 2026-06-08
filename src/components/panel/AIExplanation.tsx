@@ -105,12 +105,12 @@ export function AIExplanation({ nodeId, projectId, nodeLabel }: AIExplanationPro
         )}
 
         {/* Dependencies note */}
-        {data.dependencies_note && (
+        {data.dependenciesNote && (
           <div className="border-t border-border-subtle pt-3">
             <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
               Dependencias
             </h4>
-            <MarkdownView content={data.dependencies_note} />
+            <MarkdownView content={data.dependenciesNote} />
           </div>
         )}
 

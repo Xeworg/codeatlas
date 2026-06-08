@@ -239,7 +239,7 @@ describe('B4: Stale-result protection — shared guard across explain calls', ()
             setTimeout(
               () =>
                 resolve({
-                  node_id: 'node-A',
+                  nodeId: 'node-A',
                   summary: 'Node A',
                   details: {},
                   role: 'assistant',
@@ -255,7 +255,7 @@ describe('B4: Stale-result protection — shared guard across explain calls', ()
             setTimeout(
               () =>
                 resolve({
-                  node_id: 'node-B',
+                  nodeId: 'node-B',
                   summary: 'Node B',
                   details: {},
                   role: 'assistant',
