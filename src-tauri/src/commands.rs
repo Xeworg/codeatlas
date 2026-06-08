@@ -469,36 +469,9 @@ pub fn export_view(
 
 // ─── Observability helpers ──────────────────────────────────────────────────
 
-/// Returns true if the given error string indicates a SQLite UNIQUE constraint
-/// violation on the `projects.root_path` column.
-///
-/// SQLite always uses uppercase in error messages. The check is case-sensitive.
-#[allow(dead_code)]
-pub fn is_root_path_conflict(err: &str) -> bool {
-    err.contains("UNIQUE constraint failed: projects.root_path")
-}
-
-/// Maps a `save_scan_result` error string to a user-facing message.
-///
-/// If the error is a `projects.root_path` UNIQUE constraint violation, returns
-/// `"Project already exists at path: {root_path}"`. Otherwise returns the original
-/// error string unchanged.
-///
-/// The root_path conflict case emits a WARN log here. Non-conflict errors are
-/// returned unchanged so callers can add operation-specific ERROR context.
-#[allow(dead_code)]
-pub fn map_save_scan_result_error(err: &str, root_path: &str, project_id: &str) -> String {
-    if is_root_path_conflict(err) {
-        tracing::warn!(
-            project_id = %project_id,
-            root_path = %root_path,
-            "projects.root_path UNIQUE constraint conflict"
-        );
-        format!("Project already exists at path: {}", root_path)
-    } else {
-        err.to_string()
-    }
-}
+// SQLite UNIQUE-constraint error parsing lives in `engine::db::error_mapping`.
+// Both the service layer and the presentation layer call those helpers; do
+// not re-implement the string parsing here.
 
 mod tests;
 
