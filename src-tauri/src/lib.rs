@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+pub mod ipc_error;
 pub mod logging;
 
 use commands::AppState;
