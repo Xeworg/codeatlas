@@ -73,7 +73,7 @@ where
 /// layer migrates to this trait in PR-B Tasks B.10 and B.11.
 #[allow(dead_code)] // consumed by presentation in PR-B Tasks B.4-B.11
 #[async_trait::async_trait]
-pub(crate) trait AIServicePort: Send + Sync {
+pub trait AIServicePort: Send + Sync {
     /// Explain a code node given its file content, graph, and outline.
     /// The service composes the code context from the inputs.
     async fn explain_node_with_context(

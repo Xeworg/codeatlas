@@ -50,6 +50,14 @@ use tauri::State;
 ///   takes its mutable collaborator (`ai_config`) through the adapter
 ///   port. PR-B of the pre-wave-2-foundation change replaces both
 ///   concrete fields with `Arc<dyn ...>` port references.
+///
+/// `ai_service_port` is the new port-trait reference introduced in
+/// PR-B Task B.4. It holds the SAME concrete `AIService` as
+/// `ai_service` (constructed in `lib.rs::run()`), exposed through the
+/// `AIServicePort` trait so commands can be refactored to consume the
+/// port without depending on the concrete struct. The concrete
+/// `ai_service` field stays in place (marked `#[allow(dead_code)]` in
+/// the impl) until B.9 cleans up the migration.
 pub struct AppState {
     pub db: DbPool,
     pub scan_status: Arc<Mutex<ScanStatus>>,
@@ -58,6 +66,11 @@ pub struct AppState {
     pub project_root: Arc<Mutex<String>>,
     /// AI service with provider resolver — injected once at startup.
     pub ai_service: engine::ai::AIService,
+    /// AI service exposed through the `AIServicePort` port trait. The
+    /// commands in this crate will migrate to use this field in
+    /// PR-B Tasks B.10 and B.11.
+    #[allow(dead_code)] // consumed in B.10/B.11
+    pub ai_service_port: Arc<dyn engine::ai::AIServicePort>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

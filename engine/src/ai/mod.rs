@@ -13,4 +13,4 @@ pub use context::ContextBuilder;
 pub use factory::AIProviderResolver;
 pub use provider::AIProvider;
 // ResolvedProvider is internal; do not expose as public API.
-pub use service::AIService;
+pub use service::{AIService, AIServicePort};

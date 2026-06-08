@@ -52,6 +52,8 @@ pub fn run() {
                 ai_config: std::sync::Arc::new(Mutex::new(None)),
                 project_root: std::sync::Arc::new(Mutex::new(String::new())),
                 ai_service: engine::ai::AIService::default(),
+                ai_service_port: std::sync::Arc::new(engine::ai::AIService::default())
+                    as std::sync::Arc<dyn engine::ai::AIServicePort>,
             };
 
             app.manage(app_state);
