@@ -8,13 +8,20 @@ use crate::models::{FileInfo, ImportInfo, OutlineItem, ScanResult};
 /// Thread-safe wrapper around rusqlite::Connection.
 /// rusqlite::Connection is NOT Send+Sync. Guarding all access
 /// through a Mutex makes it safe for Tauri's async multi-threaded runtime.
-pub struct DbPool(Mutex<Connection>);
+///
+/// `DbPool` is internally an `Arc<Mutex<Connection>>` so it can be cheaply
+/// cloned (one atomic refcount bump) and stored in `Arc<DbPool>` for
+/// presentation-layer consumption. Cloning the pool does NOT clone the
+/// underlying connection; both clones share the same SQLite handle behind
+/// the mutex.
+#[derive(Clone)]
+pub struct DbPool(std::sync::Arc<Mutex<Connection>>);
 
 impl DbPool {
     /// Open a connection to a file-path database.
     pub fn new(path: &str) -> SqliteResult<Self> {
         let conn = Connection::open(path)?;
-        Ok(Self(Mutex::new(conn)))
+        Ok(Self(std::sync::Arc::new(Mutex::new(conn))))
     }
 
     /// Open an in-memory database.
@@ -23,7 +30,7 @@ impl DbPool {
     /// Also available to integration tests in `tests/` via the `engine` crate.
     pub fn in_memory() -> SqliteResult<Self> {
         let conn = Connection::open_in_memory()?;
-        Ok(Self(Mutex::new(conn)))
+        Ok(Self(std::sync::Arc::new(Mutex::new(conn))))
     }
 
     /// Execute a closure with a locked reference to the connection.
@@ -61,16 +68,43 @@ impl DbPool {
     }
 }
 
-/// Low-level repository that borrows a locked connection for the duration
-/// of a single operation. Creates a new borrow per method call so that
-/// multiple concurrent Tauri commands don't block each other.
+/// Low-level repository that holds a clone of the `DbPool` so the
+/// repository can be stored in `Arc<dyn ...>` for presentation-layer
+/// consumption (PR-B Tasks B.5–B.9). The pool is internally an
+/// `Arc<Mutex<Connection>>`, so cloning the `Arc<DbPool>` is a single
+/// refcount bump and does not duplicate the underlying SQLite handle.
+///
+/// The `'pool` lifetime is kept on the struct for backward compatibility
+/// with existing call sites and tests that build a `ProjectRepository`
+/// from a stack-local `&DbPool`. The struct field is an `Arc<DbPool>`,
+/// which `Deref`s to `&DbPool`, so all 32 `self.pool.with_connection(...)`
+/// call sites continue to work unchanged.
 pub struct ProjectRepository<'pool> {
-    pool: &'pool DbPool,
+    pool: std::sync::Arc<DbPool>,
+    _phantom: std::marker::PhantomData<&'pool ()>,
 }
 
 impl<'pool> ProjectRepository<'pool> {
+    /// Build a repository that shares ownership of the pool. The pool
+    /// is cloned into an internal `Arc<DbPool>`, so the returned
+    /// repository can outlive the borrow of the original `&DbPool`.
     pub fn new(pool: &'pool DbPool) -> Self {
-        Self { pool }
+        Self {
+            pool: std::sync::Arc::new(pool.clone()),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Build a repository from an owned `Arc<DbPool>`. This is the
+    /// path used by `ScanRepositoryAdapter::from_arc` and the other
+    /// repository adapters' production constructors, so the adapter
+    /// (and the `Arc<dyn Trait>` it lives inside) can own its pool
+    /// reference without a lifetime parameter.
+    pub fn from_arc(pool: std::sync::Arc<DbPool>) -> Self {
+        Self {
+            pool,
+            _phantom: std::marker::PhantomData,
+        }
     }
 
     pub fn save_scan_result(&self, result: &ScanResult) -> SqliteResult<()> {

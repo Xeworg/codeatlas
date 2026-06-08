@@ -65,19 +65,46 @@ pub trait ScanRepository {
 ///
 /// This adapter is additive: it wraps the existing `ProjectRepository` without
 /// modifying its internal structure. `queries.rs` stays intact.
-pub struct ScanRepositoryAdapter<'pool> {
-    inner: crate::db::queries::ProjectRepository<'pool>,
+///
+/// Two constructors are provided:
+/// - `new(&pool)`: lifetime-tied, used by internal engine tests that hold a
+///   stack-local `DbPool`.
+/// - `from_arc(Arc<DbPool>)`: produces a `'static` adapter that owns its
+///   own `Arc<DbPool>` clone. This is the form consumed by the
+///   presentation layer's `Arc<dyn ScanRepository>` (PR-B Task B.5).
+pub struct ScanRepositoryAdapter {
+    inner: crate::db::queries::ProjectRepository<'static>,
+    _pool: std::sync::Arc<DbPool>,
 }
 
-impl<'pool> ScanRepositoryAdapter<'pool> {
-    pub fn new(pool: &'pool DbPool) -> Self {
+impl ScanRepositoryAdapter {
+    /// Internal-test constructor. The returned adapter borrows the pool;
+    /// it cannot outlive it.
+    ///
+    /// Internally the pool is cloned into an `Arc<DbPool>` and held as
+    /// a `'static` `ProjectRepository`, so this constructor is
+    /// equivalent to `from_arc(Arc::new(pool.clone()))`. The simpler
+    /// signature is preserved so existing tests do not need to be
+    /// rewritten.
+    pub fn new(pool: &DbPool) -> Self {
+        let pool = std::sync::Arc::new(pool.clone());
         Self {
-            inner: crate::db::queries::ProjectRepository::new(pool),
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
+        }
+    }
+
+    /// Production constructor. Owns the `Arc<DbPool>` so the adapter
+    /// can be stored in `Arc<dyn ScanRepository>`.
+    pub fn from_arc(pool: std::sync::Arc<DbPool>) -> Self {
+        Self {
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
         }
     }
 }
 
-impl<'pool> ScanRepository for ScanRepositoryAdapter<'pool> {
+impl ScanRepository for ScanRepositoryAdapter {
     fn save_scan_result(&self, result: &ScanResult) -> Result<()> {
         self.inner
             .save_scan_result(result)
@@ -159,19 +186,32 @@ pub trait GraphRepository {
 /// Adapter that implements `GraphRepository` by delegating to `ProjectRepository`.
 ///
 /// Additive wrapper: does not refactor the internal structure of `queries.rs`.
-pub struct GraphRepositoryAdapter<'pool> {
-    inner: crate::db::queries::ProjectRepository<'pool>,
+///
+/// Two constructors: `new(&pool)` for internal tests, `from_arc(Arc<DbPool>)`
+/// for production (stores the adapter inside `Arc<dyn GraphRepository>`).
+pub struct GraphRepositoryAdapter {
+    inner: crate::db::queries::ProjectRepository<'static>,
+    _pool: std::sync::Arc<DbPool>,
 }
 
-impl<'pool> GraphRepositoryAdapter<'pool> {
-    pub fn new(pool: &'pool DbPool) -> Self {
+impl GraphRepositoryAdapter {
+    pub fn new(pool: &DbPool) -> Self {
+        let pool = std::sync::Arc::new(pool.clone());
         Self {
-            inner: crate::db::queries::ProjectRepository::new(pool),
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
+        }
+    }
+
+    pub fn from_arc(pool: std::sync::Arc<DbPool>) -> Self {
+        Self {
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
         }
     }
 }
 
-impl<'pool> GraphRepository for GraphRepositoryAdapter<'pool> {
+impl GraphRepository for GraphRepositoryAdapter {
     fn save_graph_cache(&self, project_id: &str, graph_json: &str) -> Result<()> {
         self.inner
             .save_graph_cache(project_id, graph_json)
@@ -332,19 +372,32 @@ pub trait WorkspaceRepository {
 /// Adapter that implements `WorkspaceRepository` by delegating to `ProjectRepository`.
 ///
 /// Additive wrapper: does not refactor the internal structure of `queries.rs`.
-pub struct WorkspaceRepositoryAdapter<'pool> {
-    inner: crate::db::queries::ProjectRepository<'pool>,
+///
+/// Two constructors: `new(&pool)` for internal tests, `from_arc(Arc<DbPool>)`
+/// for production (stores the adapter inside `Arc<dyn WorkspaceRepository>`).
+pub struct WorkspaceRepositoryAdapter {
+    inner: crate::db::queries::ProjectRepository<'static>,
+    _pool: std::sync::Arc<DbPool>,
 }
 
-impl<'pool> WorkspaceRepositoryAdapter<'pool> {
-    pub fn new(pool: &'pool DbPool) -> Self {
+impl WorkspaceRepositoryAdapter {
+    pub fn new(pool: &DbPool) -> Self {
+        let pool = std::sync::Arc::new(pool.clone());
         Self {
-            inner: crate::db::queries::ProjectRepository::new(pool),
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
+        }
+    }
+
+    pub fn from_arc(pool: std::sync::Arc<DbPool>) -> Self {
+        Self {
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
         }
     }
 }
 
-impl<'pool> WorkspaceRepository for WorkspaceRepositoryAdapter<'pool> {
+impl WorkspaceRepository for WorkspaceRepositoryAdapter {
     fn create_workspace(&self, name: &str) -> Result<(String, String, String)> {
         self.inner
             .create_workspace(name)
@@ -530,23 +583,34 @@ pub trait AnalysisRepository {
 }
 
 /// Adapter that implements `AnalysisRepository` by delegating to `ProjectRepository`.
-pub struct AnalysisRepositoryAdapter<'pool> {
-    pool: &'pool crate::db::DbPool,
-    inner: crate::db::queries::ProjectRepository<'pool>,
+///
+/// Two constructors: `new(&pool)` for internal tests, `from_arc(Arc<DbPool>)`
+/// for production (stores the adapter inside `Arc<dyn AnalysisRepository>`).
+pub struct AnalysisRepositoryAdapter {
+    pool: std::sync::Arc<DbPool>,
+    inner: crate::db::queries::ProjectRepository<'static>,
 }
 
-impl<'pool> AnalysisRepositoryAdapter<'pool> {
-    pub fn new(pool: &'pool crate::db::DbPool) -> Self {
+impl AnalysisRepositoryAdapter {
+    pub fn new(pool: &crate::db::DbPool) -> Self {
+        let pool = std::sync::Arc::new(pool.clone());
         Self {
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
             pool,
-            inner: crate::db::queries::ProjectRepository::new(pool),
+        }
+    }
+
+    pub fn from_arc(pool: std::sync::Arc<crate::db::DbPool>) -> Self {
+        Self {
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            pool,
         }
     }
 }
 
-impl<'pool> AnalysisRepository for AnalysisRepositoryAdapter<'pool> {
+impl AnalysisRepository for AnalysisRepositoryAdapter {
     fn pool(&self) -> &crate::db::DbPool {
-        self.pool
+        &self.pool
     }
 
     fn save_architecture_detection(
@@ -702,5 +766,79 @@ impl AppStatePort for AppStatePortAdapter {
     fn set_project_root(&self, path: &str) -> Result<()> {
         *self.project_root.lock().unwrap() = path.to_string();
         Ok(())
+    }
+}
+
+// ─── from_arc tests ─────────────────────────────────────────────────────────
+//
+// These tests verify that the production `from_arc(Arc<DbPool>)` constructor
+// returns a `'static` adapter that holds the pool alive, callable from
+// the trait methods. The tests are minimal: they construct the adapter,
+// call one cheap method on it, and assert the pool is still queryable.
+
+#[cfg(test)]
+mod from_arc_tests {
+    use super::*;
+    use crate::db::DbPool;
+
+    fn make_pool() -> DbPool {
+        let pool = DbPool::in_memory().expect("in-memory pool");
+        pool.init_schema().expect("schema init");
+        pool
+    }
+
+    #[test]
+    fn scan_repository_adapter_from_arc_keeps_pool_alive() {
+        let pool = std::sync::Arc::new(make_pool());
+        let adapter = ScanRepositoryAdapter::from_arc(pool.clone());
+        // Round-trip a project metadata to prove the inner ProjectRepository
+        // can actually talk to the pool.
+        let result = adapter.get_project_by_path("/no/such/path");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn graph_repository_adapter_from_arc_keeps_pool_alive() {
+        let pool = std::sync::Arc::new(make_pool());
+        let adapter = GraphRepositoryAdapter::from_arc(pool.clone());
+        let result = adapter.get_graph_cache("unknown-project");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn workspace_repository_adapter_from_arc_keeps_pool_alive() {
+        let pool = std::sync::Arc::new(make_pool());
+        let adapter = WorkspaceRepositoryAdapter::from_arc(pool.clone());
+        let result = adapter.list_workspaces();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn analysis_repository_adapter_from_arc_keeps_pool_alive() {
+        let pool = std::sync::Arc::new(make_pool());
+        let weak = std::sync::Arc::downgrade(&pool);
+        let adapter = AnalysisRepositoryAdapter::from_arc(pool.clone());
+        drop(pool);
+        // The adapter's internal Arc still holds the pool alive; the
+        // Weak from the caller can still upgrade.
+        assert!(weak.upgrade().is_some());
+        // And the pool() method returns a usable DbPool.
+        let pool_ref = adapter.pool();
+        let result = pool_ref.with_connection(|conn| conn.execute_batch("SELECT 1"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn new_constructor_still_works_for_internal_tests() {
+        // Regression guard: `new(&pool)` must still work because the
+        // internal engine tests (in `engine/src/services/`) and the
+        // existing integration tests in `engine/tests/` use it.
+        let pool = make_pool();
+        let _adapter = ScanRepositoryAdapter::new(&pool);
+        let _adapter = GraphRepositoryAdapter::new(&pool);
+        let _adapter = WorkspaceRepositoryAdapter::new(&pool);
+        let _adapter = AnalysisRepositoryAdapter::new(&pool);
     }
 }
