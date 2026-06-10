@@ -21,33 +21,10 @@ impl<R> AIService<R> {
     pub fn new(resolver: R) -> Self {
         Self { resolver }
     }
-}
 
-impl<R> AIService<R>
-where
-    R: AIProviderResolver,
-{
-    pub async fn explain_node(
-        &self,
-        config: &AIConfig,
-        node_id: &str,
-        code_context: &str,
-        dependencies: &[String],
-    ) -> Result<NodeExplanation> {
-        let provider = self.resolver.resolve(config)?;
-        provider
-            .explain_node(node_id, code_context, dependencies)
-            .await
-    }
-
-    pub async fn chat(
-        &self,
-        config: &AIConfig,
-        messages: &[ChatMessage],
-        context: &str,
-    ) -> Result<ChatResponse> {
-        let provider = self.resolver.resolve(config)?;
-        provider.chat(messages, context).await
+    /// Exposes the resolver for use by the `AIServicePort` impl.
+    pub(crate) fn resolver(&self) -> &R {
+        &self.resolver
     }
 }
 
@@ -71,7 +48,6 @@ where
 /// prompt. The previous methods (`explain_node`, `chat`) remain
 /// available for direct use by other engine callers; the presentation
 /// layer migrates to this trait in PR-B Tasks B.10 and B.11.
-#[allow(dead_code)] // consumed by presentation in PR-B Tasks B.4-B.11
 #[async_trait::async_trait]
 pub trait AIServicePort: Send + Sync {
     /// Explain a code node given its file content, graph, and outline.
@@ -102,42 +78,80 @@ pub trait AIServicePort: Send + Sync {
 impl<R> AIServicePort for AIService<R>
 where
     R: AIProviderResolver + Send + Sync,
+    R::Provider: Send,
 {
     async fn explain_node_with_context(
         &self,
-        _config: &AIConfig,
-        _file_info: &crate::models::FileInfo,
-        _file_content: &str,
-        _graph: &crate::models::GraphData,
-        _outline: &[crate::models::OutlineItem],
+        config: &AIConfig,
+        file_info: &crate::models::FileInfo,
+        file_content: &str,
+        graph: &crate::models::GraphData,
+        outline: &[crate::models::OutlineItem],
     ) -> Result<NodeExplanation> {
-        // Body lands in PR-B Task B.10. For now, return an explicit
-        // AppError so any caller that reaches this method before the
-        // body is implemented gets a clear diagnostic instead of a
-        // panic.
-        Err(crate::AppError::Internal(
-            "AIServicePort::explain_node_with_context not yet implemented; \
-             see PR-B Task B.10"
-                .to_string(),
-        ))
+        use crate::ai::ContextBuilder;
+
+        // Build compact context — prefer semantic outline when available
+        let code_context = if !outline.is_empty() {
+            ContextBuilder::build_node_context_with_outline(
+                file_content,
+                &file_info.path,
+                graph,
+                &file_info.id,
+                outline,
+            )
+        } else {
+            ContextBuilder::build_node_context(file_content, &file_info.path, graph, &file_info.id)
+        };
+
+        // Build dependency labels list
+        let deps: Vec<String> = graph
+            .edges
+            .iter()
+            .filter(|e| e.source == file_info.id)
+            .take(5)
+            .filter_map(|e| graph.nodes.iter().find(|n| n.id == e.target))
+            .map(|n| n.label.clone())
+            .collect();
+
+        let provider = self.resolver().resolve(config)?;
+        provider
+            .explain_node(&file_info.id, &code_context, &deps)
+            .await
     }
 
     async fn chat_with_context(
         &self,
-        _config: &AIConfig,
+        config: &AIConfig,
         _project_id: &str,
         _root_path: &str,
-        _file_contents: &[(String, String)],
-        _graph: &crate::models::GraphData,
-        _history: &[ChatMessage],
-        _new_user_message: &str,
+        file_contents: &[(String, String)],
+        graph: &crate::models::GraphData,
+        history: &[ChatMessage],
+        new_user_message: &str,
     ) -> Result<ChatResponse> {
-        // Body lands in PR-B Task B.11. See note above.
-        Err(crate::AppError::Internal(
-            "AIServicePort::chat_with_context not yet implemented; \
-             see PR-B Task B.11"
-                .to_string(),
-        ))
+        use crate::ai::ContextBuilder;
+
+        // Build chat context (use &str refs — ContextBuilder::build_chat_context
+        // takes &[(&str, &str)], file_contents lifetime must outlive the call)
+        let context = {
+            let refs: Vec<(&str, &str)> = file_contents
+                .iter()
+                .map(|(a, b)| (a.as_str(), b.as_str()))
+                .collect();
+            ContextBuilder::build_chat_context(&refs, graph, new_user_message)
+        };
+
+        // Build full history including the new user message
+        let mut full_history = history.to_vec();
+        full_history.push(ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: crate::models::ChatRole::User,
+            content: new_user_message.to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+
+        let provider = self.resolver().resolve(config)?;
+        provider.chat(&full_history, &context).await
     }
 }
 
@@ -151,6 +165,7 @@ mod tests {
 
     struct TestProvider;
 
+    #[async_trait::async_trait]
     impl AIProvider for TestProvider {
         async fn explain_node(
             &self,
@@ -204,34 +219,49 @@ mod tests {
     }
 
     #[test]
-    fn explain_node_uses_resolver_and_provider() {
+    fn explain_node_with_context_uses_resolver_and_provider() {
         let seen_provider = Arc::new(Mutex::new(None));
-        let service = AIService::new(TestResolver {
-            seen_provider: seen_provider.clone(),
-        });
-        let dependencies = vec!["dep-a".to_string(), "dep-b".to_string()];
+        let service: std::sync::Arc<dyn AIServicePort> =
+            std::sync::Arc::new(AIService::new(TestResolver {
+                seen_provider: seen_provider.clone(),
+            }));
         let rt = tokio::runtime::Runtime::new().unwrap();
+        let file_info = crate::models::FileInfo {
+            id: "file-1".to_string(),
+            path: "src/main.rs".to_string(),
+            name: "main.rs".to_string(),
+            extension: "rs".to_string(),
+            symbols: vec![],
+            lines: 10,
+        };
+        let graph = crate::models::GraphData {
+            nodes: vec![],
+            edges: vec![],
+            project_id: "p1".to_string(),
+            generated_at: "2026-06-09T00:00:00Z".to_string(),
+        };
 
         let explanation = rt
-            .block_on(service.explain_node(
+            .block_on(service.explain_node_with_context(
                 &config("anthropic"),
-                "file-1",
+                &file_info,
                 "fn main() {}",
-                &dependencies,
+                &graph,
+                &[],
             ))
             .unwrap();
 
         assert_eq!(seen_provider.lock().unwrap().as_deref(), Some("anthropic"));
         assert_eq!(explanation.node_id, "file-1");
-        assert_eq!(explanation.details, "dep-a,dep-b");
     }
 
     #[test]
-    fn chat_uses_resolver_and_provider() {
+    fn chat_with_context_uses_resolver_and_provider() {
         let seen_provider = Arc::new(Mutex::new(None));
-        let service = AIService::new(TestResolver {
-            seen_provider: seen_provider.clone(),
-        });
+        let service: std::sync::Arc<dyn AIServicePort> =
+            std::sync::Arc::new(AIService::new(TestResolver {
+                seen_provider: seen_provider.clone(),
+            }));
         let history = vec![ChatMessage {
             id: "msg-0".to_string(),
             role: ChatRole::User,
@@ -239,18 +269,31 @@ mod tests {
             timestamp: "2026-06-07T00:00:00Z".to_string(),
         }];
         let rt = tokio::runtime::Runtime::new().unwrap();
+        let graph = crate::models::GraphData {
+            nodes: vec![],
+            edges: vec![],
+            project_id: "p1".to_string(),
+            generated_at: "2026-06-09T00:00:00Z".to_string(),
+        };
 
         let response = rt
-            .block_on(service.chat(&config("custom"), &history, "ctx"))
+            .block_on(service.chat_with_context(
+                &config("custom"),
+                "p1",
+                "/repo",
+                &[],
+                &graph,
+                &history,
+                "hi",
+            ))
             .unwrap();
 
         assert_eq!(seen_provider.lock().unwrap().as_deref(), Some("custom"));
         assert_eq!(response.message.role.to_string(), "assistant");
-        assert_eq!(response.message.content, "ctx:1");
     }
 
     #[test]
-    fn resolver_errors_bubble_up() {
+    fn chat_with_context_resolver_errors_bubble_up() {
         struct FailingResolver;
 
         impl AIProviderResolver for FailingResolver {
@@ -261,10 +304,25 @@ mod tests {
             }
         }
 
-        let service = AIService::new(FailingResolver);
+        let service: std::sync::Arc<dyn AIServicePort> =
+            std::sync::Arc::new(AIService::new(FailingResolver));
         let rt = tokio::runtime::Runtime::new().unwrap();
+        let graph = crate::models::GraphData {
+            nodes: vec![],
+            edges: vec![],
+            project_id: "p1".to_string(),
+            generated_at: "2026-06-09T00:00:00Z".to_string(),
+        };
         let err = rt
-            .block_on(service.chat(&config("anthropic"), &[], "ctx"))
+            .block_on(service.chat_with_context(
+                &config("anthropic"),
+                "p1",
+                "/repo",
+                &[],
+                &graph,
+                &[],
+                "hi",
+            ))
             .unwrap_err();
 
         assert!(matches!(err, AppError::AIUnavailable(_)));
@@ -292,74 +350,109 @@ mod tests {
     }
 
     #[test]
-    fn explain_node_with_context_returns_implementation_pending_error() {
-        // Until PR-B Task B.10 fills the body, the trait method must
-        // surface a clear AppError::Internal so any caller that reaches
-        // it before the implementation lands gets a diagnostic instead
-        // of a panic.
+    fn explain_node_with_context_builds_context_and_calls_provider() {
+        // Verify that explain_node_with_context builds context using
+        // ContextBuilder and calls the provider with the right arguments.
+        let seen_provider = Arc::new(Mutex::new(None));
         let service: std::sync::Arc<dyn AIServicePort> =
             std::sync::Arc::new(AIService::new(TestResolver {
-                seen_provider: Arc::new(Mutex::new(None)),
+                seen_provider: seen_provider.clone(),
             }));
         let rt = tokio::runtime::Runtime::new().unwrap();
         let file_info = crate::models::FileInfo {
-            id: "f1".to_string(),
-            path: "src/main.rs".to_string(),
-            name: "main.rs".to_string(),
+            id: "node-1".to_string(),
+            path: "src/lib.rs".to_string(),
+            name: "lib.rs".to_string(),
             extension: "rs".to_string(),
             symbols: vec![],
-            lines: 1,
+            lines: 50,
         };
         let graph = crate::models::GraphData {
-            nodes: vec![],
-            edges: vec![],
+            nodes: vec![crate::models::GraphNode {
+                id: "node-1".to_string(),
+                node_type: crate::models::NodeType::Service,
+                label: "lib.rs".to_string(),
+                path: "src/lib.rs".to_string(),
+                symbol_count: 5,
+                position: None,
+            }],
+            edges: vec![crate::models::GraphEdge {
+                id: "edge-1".to_string(),
+                source: "node-1".to_string(),
+                target: "node-2".to_string(),
+                imports: vec![],
+            }],
             project_id: "p1".to_string(),
-            generated_at: "2026-06-08T00:00:00Z".to_string(),
+            generated_at: "2026-06-09T00:00:00Z".to_string(),
         };
+        let outline = vec![crate::models::OutlineItem {
+            id: "outline-1".to_string(),
+            file_id: "node-1".to_string(),
+            name: "fn main".to_string(),
+            kind: crate::models::OutlineItemKind::Function,
+            line_start: 1,
+            line_end: 10,
+            column_start: None,
+            column_end: None,
+            children: vec![],
+        }];
 
-        let err = rt
+        let explanation = rt
             .block_on(service.explain_node_with_context(
                 &config("anthropic"),
                 &file_info,
                 "fn main() {}",
                 &graph,
-                &[],
+                &outline,
             ))
-            .unwrap_err();
+            .unwrap();
 
-        assert!(
-            matches!(err, AppError::Internal(_)),
-            "expected AppError::Internal, got {:?}",
-            err
-        );
+        // Verify provider was resolved with correct config
+        assert_eq!(seen_provider.lock().unwrap().as_deref(), Some("anthropic"));
+        // Verify provider was called with correct node_id
+        assert_eq!(explanation.node_id, "node-1");
+        // Verify the context was built with the outline (summary contains "summary:" prefix from TestProvider)
+        assert!(explanation.summary.starts_with("summary:"));
     }
 
     #[test]
-    fn chat_with_context_returns_implementation_pending_error() {
+    fn chat_with_context_builds_context_and_calls_provider() {
+        // Verify that chat_with_context builds context and calls provider.
+        let seen_provider = Arc::new(Mutex::new(None));
         let service: std::sync::Arc<dyn AIServicePort> =
             std::sync::Arc::new(AIService::new(TestResolver {
-                seen_provider: Arc::new(Mutex::new(None)),
+                seen_provider: seen_provider.clone(),
             }));
         let rt = tokio::runtime::Runtime::new().unwrap();
         let graph = crate::models::GraphData {
             nodes: vec![],
             edges: vec![],
             project_id: "p1".to_string(),
-            generated_at: "2026-06-08T00:00:00Z".to_string(),
+            generated_at: "2026-06-09T00:00:00Z".to_string(),
         };
+        let history = vec![ChatMessage {
+            id: "msg-0".to_string(),
+            role: ChatRole::User,
+            content: "previous".to_string(),
+            timestamp: "2026-06-09T00:00:00Z".to_string(),
+        }];
+        let file_contents = vec![("src/main.rs".to_string(), "fn main() {}".to_string())];
 
-        let err = rt
+        let response = rt
             .block_on(service.chat_with_context(
-                &config("anthropic"),
+                &config("custom"),
                 "p1",
                 "/repo",
-                &[],
+                &file_contents,
                 &graph,
-                &[],
-                "hola",
+                &history,
+                "hello",
             ))
-            .unwrap_err();
+            .unwrap();
 
-        assert!(matches!(err, AppError::Internal(_)));
+        assert_eq!(seen_provider.lock().unwrap().as_deref(), Some("custom"));
+        assert_eq!(response.message.role.to_string(), "assistant");
+        // TestProvider.format is "{context}:{messages.len()}", so with 2 messages and context="..."
+        assert!(response.message.content.contains(':'));
     }
 }

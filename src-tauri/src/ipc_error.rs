@@ -23,7 +23,6 @@ use engine::AppError;
 /// presentation layer can always return a `String` error to Tauri
 /// without panicking on a serialization bug. The fallback is observable
 /// in tests as a last-resort guard.
-#[allow(dead_code)]
 pub(crate) fn to_ipc_error(e: AppError) -> String {
     match serde_json::to_string(&e) {
         Ok(s) => s,

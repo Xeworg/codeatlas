@@ -3,8 +3,6 @@
 //! All commands return timing metadata where applicable.
 
 use engine::{
-    ai::ContextBuilder,
-    db::{DbPool, ProjectRepository},
     models::{
         ChatMessage, FileInfo, GraphData, NodeExplanation, OutlineItem, ScanResult, ScanStatus,
     },
@@ -41,32 +39,15 @@ use tauri::State;
 ///   required to be `Send`, and `Arc<Mutex<T>>: Send + Sync` whenever
 ///   `T: Send`. No `unsafe impl` is needed and none is used.
 ///
-/// Two fields are intentionally NOT behind `Arc<Mutex<...>>`:
-/// - `db: DbPool` is itself a clonable handle to the SQLite pool.
-/// - `ai_service: engine::ai::AIService` is a stateless service that
-///   takes its mutable collaborator (`ai_config`) through the adapter
-///   port. PR-B of the pre-wave-2-foundation change replaces both
-///   concrete fields with `Arc<dyn ...>` port references.
-///
-/// `ai_service_port` is the new port-trait reference introduced in
-/// PR-B Task B.4. It holds the SAME concrete `AIService` as
-/// `ai_service` (constructed in `lib.rs::run()`), exposed through the
-/// `AIServicePort` trait so commands can be refactored to consume the
-/// port without depending on the concrete struct. The concrete
-/// `ai_service` field stays in place (marked `#[allow(dead_code)]` in
-/// the impl) until B.9 cleans up the migration.
+/// `ai_service_port` is the port-trait reference through which the
+/// presentation layer consumes AI functionality. Commands delegate to
+/// it without depending on the concrete `AIService` struct.
 pub struct AppState {
-    pub db: DbPool,
     pub scan_status: Arc<Mutex<ScanStatus>>,
     pub ai_config: Arc<Mutex<Option<engine::models::AIConfig>>>,
     /// Root path of the currently open project (set on scan).
     pub project_root: Arc<Mutex<String>>,
-    /// AI service with provider resolver — injected once at startup.
-    pub ai_service: engine::ai::AIService,
-    /// AI service exposed through the `AIServicePort` port trait. The
-    /// commands in this crate will migrate to use this field in
-    /// PR-B Tasks B.10 and B.11.
-    #[allow(dead_code)] // consumed in B.10/B.11
+    /// AI service exposed through the `AIServicePort` port trait.
     pub ai_service_port: Arc<dyn engine::ai::AIServicePort>,
     /// Graph repository port — consumed by graph commands in B.6.
     pub scan_repo: Arc<dyn engine::ports::ScanRepository>,
@@ -284,6 +265,9 @@ pub async fn explain_node(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<NodeExplanation, String> {
+    use crate::ipc_error::to_ipc_error;
+    use std::path::Path;
+
     let (config, root_path) = {
         let cfg = state.ai_config.lock().map_err(|e| e.to_string())?.clone();
         let root = state
@@ -296,10 +280,9 @@ pub async fn explain_node(
 
     let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
 
-    let repo = ProjectRepository::new(&state.db);
-
-    // Fetch file metadata from DB
-    let file_info = repo
+    // Fetch file metadata from DB via scan_repo
+    let file_info = state
+        .scan_repo
         .get_file_by_id(&node_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("File not found: {}", node_id))?;
@@ -313,7 +296,8 @@ pub async fn explain_node(
     };
 
     // Get cached graph for context (or build minimal one)
-    let graph = repo
+    let graph = state
+        .graph_repo
         .get_graph_cache(&project_id)
         .map_err(|e| e.to_string())?
         .and_then(|json| serde_json::from_str::<GraphData>(&json).ok())
@@ -325,36 +309,16 @@ pub async fn explain_node(
         });
 
     // Load outline items for this file (non-blocking; empty outline is fine)
-    let outline = repo.get_outline_items(&node_id).unwrap_or_default();
-
-    // Build compact context — prefer semantic outline when available
-    let context = if !outline.is_empty() {
-        ContextBuilder::build_node_context_with_outline(
-            &file_content,
-            &file_info.path,
-            &graph,
-            &node_id,
-            &outline,
-        )
-    } else {
-        ContextBuilder::build_node_context(&file_content, &file_info.path, &graph, &node_id)
-    };
-
-    // Build dependency labels list
-    let deps: Vec<String> = graph
-        .edges
-        .iter()
-        .filter(|e| e.source == node_id)
-        .take(5)
-        .filter_map(|e| graph.nodes.iter().find(|n| n.id == e.target))
-        .map(|n| n.label.clone())
-        .collect();
+    let outline = state
+        .scan_repo
+        .get_outline_items(&node_id)
+        .unwrap_or_default();
 
     state
-        .ai_service
-        .explain_node(&cfg, &node_id, &context, &deps)
+        .ai_service_port
+        .explain_node_with_context(&cfg, &file_info, &file_content, &graph, &outline)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -364,6 +328,9 @@ pub async fn chat(
     history: Vec<ChatMessage>,
     state: State<'_, AppState>,
 ) -> Result<engine::models::ChatResponse, String> {
+    use crate::ipc_error::to_ipc_error;
+    use std::path::Path;
+
     let (config, root_path) = {
         let cfg = state.ai_config.lock().map_err(|e| e.to_string())?.clone();
         let root = state
@@ -376,17 +343,19 @@ pub async fn chat(
 
     let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
 
-    let repo = ProjectRepository::new(&state.db);
-
-    // Get project root
-    let (_, root, _) = repo
+    // Get project root from DB (fall back to state.project_root if not persisted)
+    let root = state
+        .scan_repo
         .get_project(&project_id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Project not found: {}", project_id))?;
-    let root = if !root.is_empty() { root } else { root_path };
+        .and_then(|(_, r, _)| if r.is_empty() { None } else { Some(r) })
+        .unwrap_or(root_path);
 
     // Fetch project files from DB
-    let files = repo.get_files(&project_id).map_err(|e| e.to_string())?;
+    let files = state
+        .scan_repo
+        .get_files(&project_id)
+        .map_err(|e| e.to_string())?;
 
     // Read file contents for context (limit to first 10 files to avoid overhead)
     let file_contents: Vec<(String, String)> = files
@@ -401,7 +370,8 @@ pub async fn chat(
         .collect();
 
     // Get graph for structure context
-    let graph = repo
+    let graph = state
+        .graph_repo
         .get_graph_cache(&project_id)
         .map_err(|e| e.to_string())?
         .and_then(|json| serde_json::from_str::<GraphData>(&json).ok())
@@ -412,30 +382,28 @@ pub async fn chat(
             generated_at: chrono::Utc::now().to_rfc3339(),
         });
 
-    // Build chat context (use &str refs — ContextBuilder::build_chat_context
-    // takes &[(&str, &str)], file_contents lifetime must outlive the call)
-    let context = {
-        let refs: Vec<(&str, &str)> = file_contents
-            .iter()
-            .map(|(a, b)| (a.as_str(), b.as_str()))
-            .collect();
-        ContextBuilder::build_chat_context(&refs, &graph, &message)
-    };
-
     // Add user message to history
     let mut full_history = history;
     full_history.push(ChatMessage {
         id: uuid::Uuid::new_v4().to_string(),
         role: engine::models::ChatRole::User,
-        content: message,
+        content: message.clone(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     });
 
     state
-        .ai_service
-        .chat(&cfg, &full_history, &context)
+        .ai_service_port
+        .chat_with_context(
+            &cfg,
+            &project_id,
+            &root,
+            &file_contents,
+            &graph,
+            &full_history,
+            &message,
+        )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 // MARK: Analysis Commands

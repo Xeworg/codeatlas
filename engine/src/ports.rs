@@ -59,6 +59,9 @@ pub trait ScanRepository: Send + Sync {
     /// Persist outline items for a file. Uses INSERT OR REPLACE so rescan
     /// of the same file updates the outline JSON.
     fn save_outline_items(&self, file_id: &str, items: &[OutlineItem]) -> Result<()>;
+
+    /// Retrieve outline items for a file.
+    fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>>;
 }
 
 /// Adapter that implements `ScanRepository` by delegating to `ProjectRepository`.
@@ -150,6 +153,12 @@ impl ScanRepository for ScanRepositoryAdapter {
     fn save_outline_items(&self, file_id: &str, items: &[OutlineItem]) -> Result<()> {
         self.inner
             .save_outline_items(file_id, items)
+            .map_err(|e| crate::AppError::Database(e.to_string()))
+    }
+
+    fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>> {
+        self.inner
+            .get_outline_items(file_id)
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 }
@@ -809,6 +818,9 @@ impl ScanRepository for std::sync::Arc<dyn ScanRepository> {
     fn save_outline_items(&self, file_id: &str, items: &[OutlineItem]) -> Result<()> {
         (**self).save_outline_items(file_id, items)
     }
+    fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>> {
+        (**self).get_outline_items(file_id)
+    }
 }
 
 impl GraphRepository for std::sync::Arc<dyn GraphRepository> {
@@ -853,7 +865,13 @@ impl AnalysisRepository for std::sync::Arc<dyn AnalysisRepository> {
         avg_coupling: Option<f64>,
         density: Option<f64>,
     ) -> Result<()> {
-        (**self).save_graph_insights(project_id, cycles_json, hotspots_json, avg_coupling, density)
+        (**self).save_graph_insights(
+            project_id,
+            cycles_json,
+            hotspots_json,
+            avg_coupling,
+            density,
+        )
     }
     #[allow(clippy::type_complexity)]
     fn get_cached_graph_insights(
