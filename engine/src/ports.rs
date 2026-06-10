@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 /// Abstracts the persistence of scan results and project metadata so that
 /// application services (e.g., `ScanService`) are decoupled from the concrete
 /// `ProjectRepository` implementation.
-pub trait ScanRepository {
+pub trait ScanRepository: Send + Sync {
     /// Persist a scan result (project metadata + files + symbols).
     fn save_scan_result(&self, result: &ScanResult) -> Result<()>;
 
@@ -59,25 +59,55 @@ pub trait ScanRepository {
     /// Persist outline items for a file. Uses INSERT OR REPLACE so rescan
     /// of the same file updates the outline JSON.
     fn save_outline_items(&self, file_id: &str, items: &[OutlineItem]) -> Result<()>;
+
+    /// Retrieve outline items for a file.
+    fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>>;
 }
 
 /// Adapter that implements `ScanRepository` by delegating to `ProjectRepository`.
 ///
 /// This adapter is additive: it wraps the existing `ProjectRepository` without
 /// modifying its internal structure. `queries.rs` stays intact.
-pub struct ScanRepositoryAdapter<'pool> {
-    inner: crate::db::queries::ProjectRepository<'pool>,
+///
+/// Two constructors are provided:
+/// - `new(&pool)`: lifetime-tied, used by internal engine tests that hold a
+///   stack-local `DbPool`.
+/// - `from_arc(Arc<DbPool>)`: produces a `'static` adapter that owns its
+///   own `Arc<DbPool>` clone. This is the form consumed by the
+///   presentation layer's `Arc<dyn ScanRepository>` (PR-B Task B.5).
+pub struct ScanRepositoryAdapter {
+    inner: crate::db::queries::ProjectRepository<'static>,
+    _pool: std::sync::Arc<DbPool>,
 }
 
-impl<'pool> ScanRepositoryAdapter<'pool> {
-    pub fn new(pool: &'pool DbPool) -> Self {
+impl ScanRepositoryAdapter {
+    /// Internal-test constructor. The returned adapter borrows the pool;
+    /// it cannot outlive it.
+    ///
+    /// Internally the pool is cloned into an `Arc<DbPool>` and held as
+    /// a `'static` `ProjectRepository`, so this constructor is
+    /// equivalent to `from_arc(Arc::new(pool.clone()))`. The simpler
+    /// signature is preserved so existing tests do not need to be
+    /// rewritten.
+    pub fn new(pool: &DbPool) -> Self {
+        let pool = std::sync::Arc::new(pool.clone());
         Self {
-            inner: crate::db::queries::ProjectRepository::new(pool),
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
+        }
+    }
+
+    /// Production constructor. Owns the `Arc<DbPool>` so the adapter
+    /// can be stored in `Arc<dyn ScanRepository>`.
+    pub fn from_arc(pool: std::sync::Arc<DbPool>) -> Self {
+        Self {
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
         }
     }
 }
 
-impl<'pool> ScanRepository for ScanRepositoryAdapter<'pool> {
+impl ScanRepository for ScanRepositoryAdapter {
     fn save_scan_result(&self, result: &ScanResult) -> Result<()> {
         self.inner
             .save_scan_result(result)
@@ -125,6 +155,12 @@ impl<'pool> ScanRepository for ScanRepositoryAdapter<'pool> {
             .save_outline_items(file_id, items)
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
+
+    fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>> {
+        self.inner
+            .get_outline_items(file_id)
+            .map_err(|e| crate::AppError::Database(e.to_string()))
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,7 +172,7 @@ impl<'pool> ScanRepository for ScanRepositoryAdapter<'pool> {
 /// Abstracts graph cache persistence and file search so that application
 /// services (e.g., `GraphService`) are decoupled from the concrete
 /// `ProjectRepository` implementation.
-pub trait GraphRepository {
+pub trait GraphRepository: Send + Sync {
     /// Save a serialized graph JSON for a project.
     fn save_graph_cache(&self, project_id: &str, graph_json: &str) -> Result<()>;
 
@@ -159,19 +195,32 @@ pub trait GraphRepository {
 /// Adapter that implements `GraphRepository` by delegating to `ProjectRepository`.
 ///
 /// Additive wrapper: does not refactor the internal structure of `queries.rs`.
-pub struct GraphRepositoryAdapter<'pool> {
-    inner: crate::db::queries::ProjectRepository<'pool>,
+///
+/// Two constructors: `new(&pool)` for internal tests, `from_arc(Arc<DbPool>)`
+/// for production (stores the adapter inside `Arc<dyn GraphRepository>`).
+pub struct GraphRepositoryAdapter {
+    inner: crate::db::queries::ProjectRepository<'static>,
+    _pool: std::sync::Arc<DbPool>,
 }
 
-impl<'pool> GraphRepositoryAdapter<'pool> {
-    pub fn new(pool: &'pool DbPool) -> Self {
+impl GraphRepositoryAdapter {
+    pub fn new(pool: &DbPool) -> Self {
+        let pool = std::sync::Arc::new(pool.clone());
         Self {
-            inner: crate::db::queries::ProjectRepository::new(pool),
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
+        }
+    }
+
+    pub fn from_arc(pool: std::sync::Arc<DbPool>) -> Self {
+        Self {
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
         }
     }
 }
 
-impl<'pool> GraphRepository for GraphRepositoryAdapter<'pool> {
+impl GraphRepository for GraphRepositoryAdapter {
     fn save_graph_cache(&self, project_id: &str, graph_json: &str) -> Result<()> {
         self.inner
             .save_graph_cache(project_id, graph_json)
@@ -221,7 +270,7 @@ impl<'pool> GraphRepository for GraphRepositoryAdapter<'pool> {
 ///
 /// All methods are implemented by `WorkspaceRepositoryAdapter` which delegates
 /// to `ProjectRepository`. This port enables full testability with mock doubles.
-pub trait WorkspaceRepository {
+pub trait WorkspaceRepository: Send + Sync {
     /// Create a new workspace. Returns (id, name, created_at).
     fn create_workspace(&self, name: &str) -> Result<(String, String, String)>;
 
@@ -332,19 +381,32 @@ pub trait WorkspaceRepository {
 /// Adapter that implements `WorkspaceRepository` by delegating to `ProjectRepository`.
 ///
 /// Additive wrapper: does not refactor the internal structure of `queries.rs`.
-pub struct WorkspaceRepositoryAdapter<'pool> {
-    inner: crate::db::queries::ProjectRepository<'pool>,
+///
+/// Two constructors: `new(&pool)` for internal tests, `from_arc(Arc<DbPool>)`
+/// for production (stores the adapter inside `Arc<dyn WorkspaceRepository>`).
+pub struct WorkspaceRepositoryAdapter {
+    inner: crate::db::queries::ProjectRepository<'static>,
+    _pool: std::sync::Arc<DbPool>,
 }
 
-impl<'pool> WorkspaceRepositoryAdapter<'pool> {
-    pub fn new(pool: &'pool DbPool) -> Self {
+impl WorkspaceRepositoryAdapter {
+    pub fn new(pool: &DbPool) -> Self {
+        let pool = std::sync::Arc::new(pool.clone());
         Self {
-            inner: crate::db::queries::ProjectRepository::new(pool),
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
+        }
+    }
+
+    pub fn from_arc(pool: std::sync::Arc<DbPool>) -> Self {
+        Self {
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            _pool: pool,
         }
     }
 }
 
-impl<'pool> WorkspaceRepository for WorkspaceRepositoryAdapter<'pool> {
+impl WorkspaceRepository for WorkspaceRepositoryAdapter {
     fn create_workspace(&self, name: &str) -> Result<(String, String, String)> {
         self.inner
             .create_workspace(name)
@@ -496,7 +558,7 @@ impl<'pool> WorkspaceRepository for WorkspaceRepositoryAdapter<'pool> {
 /// Abstracts the persistence of architecture detection results and graph
 /// insights so that `AnalysisService` is decoupled from the concrete
 /// `ProjectRepository` implementation.
-pub trait AnalysisRepository {
+pub trait AnalysisRepository: Send + Sync {
     /// Returns a reference to the underlying database pool.
     /// Used by `AnalysisService` to pass to pure analysis functions that
     /// take `&DbPool` directly.
@@ -530,23 +592,34 @@ pub trait AnalysisRepository {
 }
 
 /// Adapter that implements `AnalysisRepository` by delegating to `ProjectRepository`.
-pub struct AnalysisRepositoryAdapter<'pool> {
-    pool: &'pool crate::db::DbPool,
-    inner: crate::db::queries::ProjectRepository<'pool>,
+///
+/// Two constructors: `new(&pool)` for internal tests, `from_arc(Arc<DbPool>)`
+/// for production (stores the adapter inside `Arc<dyn AnalysisRepository>`).
+pub struct AnalysisRepositoryAdapter {
+    pool: std::sync::Arc<DbPool>,
+    inner: crate::db::queries::ProjectRepository<'static>,
 }
 
-impl<'pool> AnalysisRepositoryAdapter<'pool> {
-    pub fn new(pool: &'pool crate::db::DbPool) -> Self {
+impl AnalysisRepositoryAdapter {
+    pub fn new(pool: &crate::db::DbPool) -> Self {
+        let pool = std::sync::Arc::new(pool.clone());
         Self {
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
             pool,
-            inner: crate::db::queries::ProjectRepository::new(pool),
+        }
+    }
+
+    pub fn from_arc(pool: std::sync::Arc<crate::db::DbPool>) -> Self {
+        Self {
+            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
+            pool,
         }
     }
 }
 
-impl<'pool> AnalysisRepository for AnalysisRepositoryAdapter<'pool> {
+impl AnalysisRepository for AnalysisRepositoryAdapter {
     fn pool(&self) -> &crate::db::DbPool {
-        self.pool
+        &self.pool
     }
 
     fn save_architecture_detection(
@@ -702,5 +775,295 @@ impl AppStatePort for AppStatePortAdapter {
     fn set_project_root(&self, path: &str) -> Result<()> {
         *self.project_root.lock().unwrap() = path.to_string();
         Ok(())
+    }
+}
+
+// ─── from_arc tests ─────────────────────────────────────────────────────────
+//
+// These tests verify that the production `from_arc(Arc<DbPool>)` constructor
+// returns a `'static` adapter that holds the pool alive, callable from
+// the trait methods. The tests are minimal: they construct the adapter,
+// call one cheap method on it, and assert the pool is still queryable.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Arc<dyn Trait> impls — enables Arc<dyn Trait> to satisfy S: Trait bounds
+// in service constructors. The blanket impl `impl<T: Trait> Trait for Arc<T>`
+// fails for `T = dyn Trait` because `dyn Trait: ?Sized` and type parameters
+// default to `Sized`. We add explicit impls for `Arc<dyn Trait>` which works
+// because Arc<dyn Trait> is Sized and the impl delegates via Deref.
+// ─────────────────────────────────────────────────────────────────────────────
+
+impl ScanRepository for std::sync::Arc<dyn ScanRepository> {
+    fn save_scan_result(&self, result: &ScanResult) -> Result<()> {
+        (**self).save_scan_result(result)
+    }
+    fn get_project_by_path(&self, root_path: &str) -> Result<Option<ProjectMeta>> {
+        (**self).get_project_by_path(root_path)
+    }
+    fn get_project(&self, project_id: &str) -> Result<Option<(String, String, i64)>> {
+        (**self).get_project(project_id)
+    }
+    fn get_files(&self, project_id: &str) -> Result<Vec<FileInfo>> {
+        (**self).get_files(project_id)
+    }
+    fn get_imports(&self, project_id: &str) -> Result<Vec<ImportInfo>> {
+        (**self).get_imports(project_id)
+    }
+    fn save_import(&self, import: &ImportInfo) -> Result<()> {
+        (**self).save_import(import)
+    }
+    fn get_file_by_id(&self, file_id: &str) -> Result<Option<FileInfo>> {
+        (**self).get_file_by_id(file_id)
+    }
+    fn save_outline_items(&self, file_id: &str, items: &[OutlineItem]) -> Result<()> {
+        (**self).save_outline_items(file_id, items)
+    }
+    fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>> {
+        (**self).get_outline_items(file_id)
+    }
+}
+
+impl GraphRepository for std::sync::Arc<dyn GraphRepository> {
+    fn save_graph_cache(&self, project_id: &str, graph_json: &str) -> Result<()> {
+        (**self).save_graph_cache(project_id, graph_json)
+    }
+    fn get_graph_cache(&self, project_id: &str) -> Result<Option<String>> {
+        (**self).get_graph_cache(project_id)
+    }
+    fn search_files(&self, project_id: &str, query: &str, limit: usize) -> Result<Vec<FileInfo>> {
+        (**self).search_files(project_id, query, limit)
+    }
+    fn get_project_root_for_file(&self, file_id: &str) -> Result<Option<String>> {
+        (**self).get_project_root_for_file(file_id)
+    }
+    fn save_outline_items(&self, file_id: &str, items: &[OutlineItem]) -> Result<()> {
+        (**self).save_outline_items(file_id, items)
+    }
+    fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>> {
+        (**self).get_outline_items(file_id)
+    }
+}
+
+impl AnalysisRepository for std::sync::Arc<dyn AnalysisRepository> {
+    fn pool(&self) -> &DbPool {
+        (**self).pool()
+    }
+    fn save_architecture_detection(
+        &self,
+        project_id: &str,
+        pattern: &str,
+        confidence: f64,
+        evidence_json: &str,
+    ) -> Result<()> {
+        (**self).save_architecture_detection(project_id, pattern, confidence, evidence_json)
+    }
+    fn save_graph_insights(
+        &self,
+        project_id: &str,
+        cycles_json: &str,
+        hotspots_json: &str,
+        avg_coupling: Option<f64>,
+        density: Option<f64>,
+    ) -> Result<()> {
+        (**self).save_graph_insights(
+            project_id,
+            cycles_json,
+            hotspots_json,
+            avg_coupling,
+            density,
+        )
+    }
+    #[allow(clippy::type_complexity)]
+    fn get_cached_graph_insights(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<(String, String, f64, f64, String)>> {
+        (**self).get_cached_graph_insights(project_id)
+    }
+}
+
+impl WorkspaceRepository for std::sync::Arc<dyn WorkspaceRepository> {
+    fn create_workspace(&self, name: &str) -> Result<(String, String, String)> {
+        (**self).create_workspace(name)
+    }
+
+    fn list_workspaces(&self) -> Result<Vec<(String, String, String)>> {
+        (**self).list_workspaces()
+    }
+
+    fn attach_project_to_workspace(&self, workspace_id: &str, project_id: &str) -> Result<()> {
+        (**self).attach_project_to_workspace(workspace_id, project_id)
+    }
+
+    fn list_workspace_projects(&self, workspace_id: &str) -> Result<Vec<(String, String)>> {
+        (**self).list_workspace_projects(workspace_id)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn create_snapshot(
+        &self,
+        project_id: &str,
+        label: &str,
+        workspace_id: Option<&str>,
+    ) -> Result<(
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+    )> {
+        (**self).create_snapshot(project_id, label, workspace_id)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn get_snapshot(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<
+        Option<(
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+        )>,
+    > {
+        (**self).get_snapshot(snapshot_id)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn list_snapshots(
+        &self,
+        project_id: &str,
+        workspace_id: Option<&str>,
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+        )>,
+    > {
+        (**self).list_snapshots(project_id, workspace_id)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn add_comment(
+        &self,
+        project_id: &str,
+        node_id: &str,
+        author: &str,
+        text: &str,
+        kind: Option<&str>,
+    ) -> Result<(String, String, String, String, String, String, String)> {
+        (**self).add_comment(project_id, node_id, author, text, kind)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn list_comments(
+        &self,
+        project_id: &str,
+        node_id: Option<&str>,
+    ) -> Result<Vec<(String, String, String, String, String, String, String)>> {
+        (**self).list_comments(project_id, node_id)
+    }
+
+    fn get_health_timeline(
+        &self,
+        project_id: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(String, String, f64, f64, f64, i64, i64)>> {
+        (**self).get_health_timeline(project_id, from, to)
+    }
+
+    fn compute_executive_summary(
+        &self,
+        workspace_id: &str,
+    ) -> Result<crate::db::queries::ExecutiveSummary> {
+        (**self).compute_executive_summary(workspace_id)
+    }
+
+    fn compare_snapshots(
+        &self,
+        base_snapshot_id: &str,
+        target_snapshot_id: &str,
+    ) -> Result<crate::db::queries::SnapshotDiff> {
+        (**self).compare_snapshots(base_snapshot_id, target_snapshot_id)
+    }
+
+    fn get_c4_view(&self, project_id: &str, level: u8) -> Result<crate::db::queries::C4View> {
+        (**self).get_c4_view(project_id, level)
+    }
+}
+
+#[cfg(test)]
+mod from_arc_tests {
+    use super::*;
+    use crate::db::DbPool;
+
+    fn make_pool() -> DbPool {
+        let pool = DbPool::in_memory().expect("in-memory pool");
+        pool.init_schema().expect("schema init");
+        pool
+    }
+
+    #[test]
+    fn scan_repository_adapter_from_arc_keeps_pool_alive() {
+        let pool = std::sync::Arc::new(make_pool());
+        let adapter = ScanRepositoryAdapter::from_arc(pool.clone());
+        // Round-trip a project metadata to prove the inner ProjectRepository
+        // can actually talk to the pool.
+        let result = adapter.get_project_by_path("/no/such/path");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn graph_repository_adapter_from_arc_keeps_pool_alive() {
+        let pool = std::sync::Arc::new(make_pool());
+        let adapter = GraphRepositoryAdapter::from_arc(pool.clone());
+        let result = adapter.get_graph_cache("unknown-project");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn workspace_repository_adapter_from_arc_keeps_pool_alive() {
+        let pool = std::sync::Arc::new(make_pool());
+        let adapter = WorkspaceRepositoryAdapter::from_arc(pool.clone());
+        let result = adapter.list_workspaces();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn analysis_repository_adapter_from_arc_keeps_pool_alive() {
+        let pool = std::sync::Arc::new(make_pool());
+        let weak = std::sync::Arc::downgrade(&pool);
+        let adapter = AnalysisRepositoryAdapter::from_arc(pool.clone());
+        drop(pool);
+        // The adapter's internal Arc still holds the pool alive; the
+        // Weak from the caller can still upgrade.
+        assert!(weak.upgrade().is_some());
+        // And the pool() method returns a usable DbPool.
+        let pool_ref = adapter.pool();
+        let result = pool_ref.with_connection(|conn| conn.execute_batch("SELECT 1"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn new_constructor_still_works_for_internal_tests() {
+        // Regression guard: `new(&pool)` must still work because the
+        // internal engine tests (in `engine/src/services/`) and the
+        // existing integration tests in `engine/tests/` use it.
+        let pool = make_pool();
+        let _adapter = ScanRepositoryAdapter::new(&pool);
+        let _adapter = GraphRepositoryAdapter::new(&pool);
+        let _adapter = WorkspaceRepositoryAdapter::new(&pool);
+        let _adapter = AnalysisRepositoryAdapter::new(&pool);
     }
 }

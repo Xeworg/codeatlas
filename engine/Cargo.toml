@@ -27,6 +27,9 @@ thiserror = "1.0"
 # Async runtime
 tokio = { version = "1.43", features = ["rt-multi-thread"] }
 
+# Object-safe async trait support (required for `Arc<dyn AIServicePort>`).
+async-trait = "0.1"
+
 # Database
 rusqlite = { version = "0.33", features = ["bundled"] }
 

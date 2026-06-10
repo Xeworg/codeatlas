@@ -10,6 +10,7 @@ pub enum ResolvedProvider {
     Anthropic(AnthropicProvider),
 }
 
+#[async_trait::async_trait]
 impl AIProvider for ResolvedProvider {
     async fn explain_node(
         &self,

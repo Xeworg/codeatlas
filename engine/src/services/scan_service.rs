@@ -369,6 +369,9 @@ mod tests {
         fn save_outline_items(&self, _file_id: &str, _items: &[OutlineItem]) -> Result<()> {
             unreachable!()
         }
+        fn get_outline_items(&self, _file_id: &str) -> Result<Vec<OutlineItem>> {
+            unreachable!()
+        }
     }
 
     /// T8.4 helper: verify status transitions during scan.

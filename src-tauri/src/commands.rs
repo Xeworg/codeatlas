@@ -3,22 +3,16 @@
 //! All commands return timing metadata where applicable.
 
 use engine::{
-    ai::ContextBuilder,
-    db::{DbPool, ProjectRepository},
     models::{
         ChatMessage, FileInfo, GraphData, NodeExplanation, OutlineItem, ScanResult, ScanStatus,
     },
-    ports::{
-        AnalysisRepositoryAdapter, AppStatePortAdapter, GraphRepositoryAdapter,
-        ScanRepositoryAdapter,
-    },
+    ports::AppStatePortAdapter,
     services::{AnalysisService, GraphService, ScanService},
 };
 
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use crate::ipc_error::to_ipc_error;
+
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 // ─── Global state ──────────────────────────────────────────────────────────
@@ -44,20 +38,24 @@ use tauri::State;
 ///   required to be `Send`, and `Arc<Mutex<T>>: Send + Sync` whenever
 ///   `T: Send`. No `unsafe impl` is needed and none is used.
 ///
-/// Two fields are intentionally NOT behind `Arc<Mutex<...>>`:
-/// - `db: DbPool` is itself a clonable handle to the SQLite pool.
-/// - `ai_service: engine::ai::AIService` is a stateless service that
-///   takes its mutable collaborator (`ai_config`) through the adapter
-///   port. PR-B of the pre-wave-2-foundation change replaces both
-///   concrete fields with `Arc<dyn ...>` port references.
+/// `ai_service_port` is the port-trait reference through which the
+/// presentation layer consumes AI functionality. Commands delegate to
+/// it without depending on the concrete `AIService` struct.
 pub struct AppState {
-    pub db: DbPool,
     pub scan_status: Arc<Mutex<ScanStatus>>,
     pub ai_config: Arc<Mutex<Option<engine::models::AIConfig>>>,
     /// Root path of the currently open project (set on scan).
     pub project_root: Arc<Mutex<String>>,
-    /// AI service with provider resolver — injected once at startup.
-    pub ai_service: engine::ai::AIService,
+    /// AI service exposed through the `AIServicePort` port trait.
+    pub ai_service_port: Arc<dyn engine::ai::AIServicePort>,
+    /// Graph repository port — consumed by graph commands in B.6.
+    pub scan_repo: Arc<dyn engine::ports::ScanRepository>,
+    /// Graph repository port — consumed by graph commands in B.6.
+    pub graph_repo: Arc<dyn engine::ports::GraphRepository>,
+    /// Analysis repository port — consumed by analysis commands in B.8.
+    pub analysis_repo: Arc<dyn engine::ports::AnalysisRepository>,
+    /// Workspace repository port — consumed by 13 workspace commands in B.7.
+    pub workspace_repo: Arc<dyn engine::ports::WorkspaceRepository>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -82,7 +80,7 @@ pub struct ScanStatusResponse {
 /// `AppState` mutexes — mutations through the adapter mutate the real state.
 #[tauri::command]
 pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<ScanResult, String> {
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let scan_repo = state.scan_repo.clone();
     // Wrap the real AppState mutexes in Arc so the adapter and AppState share
     // the same inner data. Arc::clone() creates a new handle to the same mutex.
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
@@ -91,7 +89,7 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         &state.project_root,
     );
     let service = ScanService::new(scan_repo, app_state_adapter);
-    service.scan_project(&path).map_err(|e| e.to_string())
+    service.scan_project(&path).map_err(to_ipc_error)
 }
 
 /// Reopen a previously indexed project by root path.
@@ -104,16 +102,14 @@ pub async fn open_project_by_path(
     path: String,
     state: State<'_, AppState>,
 ) -> Result<ScanResult, String> {
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
         &state.project_root,
     );
     let service = ScanService::new(scan_repo, app_state_adapter);
-    service
-        .open_project_by_path(&path)
-        .map_err(|e| e.to_string())
+    service.open_project_by_path(&path).map_err(to_ipc_error)
 }
 
 /// Read current scan status.
@@ -122,14 +118,14 @@ pub async fn open_project_by_path(
 /// `ScanStatus` enum to a human-readable string response.
 #[tauri::command]
 pub async fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusResponse, String> {
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
         &state.project_root,
     );
     let service = ScanService::new(scan_repo, app_state_adapter);
-    let status = service.get_scan_status().map_err(|e| e.to_string())?;
+    let status = service.get_scan_status().map_err(to_ipc_error)?;
     let status_str = match status {
         engine::models::ScanStatus::Idle => "idle",
         engine::models::ScanStatus::Scanning => "scanning",
@@ -164,15 +160,15 @@ pub async fn get_graph(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<GraphData, String> {
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let graph_repo = state.graph_repo.clone();
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
         &state.project_root,
     );
     let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
-    service.get_graph(&project_id).map_err(|e| e.to_string())
+    service.get_graph(&project_id).map_err(to_ipc_error)
 }
 
 /// Get file metadata for a node.
@@ -180,17 +176,15 @@ pub async fn get_graph(
 /// Thin shim: delegates to `GraphService::get_node_details`.
 #[tauri::command]
 pub fn get_node_details(node_id: String, state: State<'_, AppState>) -> Result<FileInfo, String> {
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let graph_repo = state.graph_repo.clone();
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
         &state.project_root,
     );
     let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
-    service
-        .get_node_details(&node_id)
-        .map_err(|e| e.to_string())
+    service.get_node_details(&node_id).map_err(to_ipc_error)
 }
 
 /// Get outline items for a node.
@@ -204,8 +198,8 @@ pub fn get_node_outline(
     node_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<OutlineItem>, String> {
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let graph_repo = state.graph_repo.clone();
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
@@ -214,7 +208,7 @@ pub fn get_node_outline(
     let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
     service
         .get_node_outline(&node_id, None)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 /// Search files by name substring (case-insensitive).
@@ -227,8 +221,8 @@ pub fn search_nodes(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<engine::models::GraphNode>, String> {
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let graph_repo = state.graph_repo.clone();
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
@@ -237,7 +231,7 @@ pub fn search_nodes(
     let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
     service
         .search_nodes(&project_id, &query, limit)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 // MARK: AI Commands
@@ -247,7 +241,7 @@ pub fn configure_ai(
     config: engine::models::AIConfig,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut ai_config = state.ai_config.lock().map_err(|e| e.to_string())?;
+    let mut ai_config = state.ai_config.lock().map_err(to_ipc_error)?;
     *ai_config = Some(config);
     Ok(())
 }
@@ -256,7 +250,7 @@ pub fn configure_ai(
 pub fn get_ai_config(
     state: State<'_, AppState>,
 ) -> Result<Option<engine::models::AIConfig>, String> {
-    let config = state.ai_config.lock().map_err(|e| e.to_string())?;
+    let config = state.ai_config.lock().map_err(to_ipc_error)?;
     Ok(config.clone())
 }
 
@@ -266,24 +260,21 @@ pub async fn explain_node(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<NodeExplanation, String> {
+    use std::path::Path;
+
     let (config, root_path) = {
-        let cfg = state.ai_config.lock().map_err(|e| e.to_string())?.clone();
-        let root = state
-            .project_root
-            .lock()
-            .map_err(|e| e.to_string())?
-            .clone();
+        let cfg = state.ai_config.lock().map_err(to_ipc_error)?.clone();
+        let root = state.project_root.lock().map_err(to_ipc_error)?.clone();
         (cfg, root)
     };
 
     let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
 
-    let repo = ProjectRepository::new(&state.db);
-
-    // Fetch file metadata from DB
-    let file_info = repo
+    // Fetch file metadata from DB via scan_repo
+    let file_info = state
+        .scan_repo
         .get_file_by_id(&node_id)
-        .map_err(|e| e.to_string())?
+        .map_err(to_ipc_error)?
         .ok_or_else(|| format!("File not found: {}", node_id))?;
 
     // Read actual file content from disk
@@ -295,9 +286,10 @@ pub async fn explain_node(
     };
 
     // Get cached graph for context (or build minimal one)
-    let graph = repo
+    let graph = state
+        .graph_repo
         .get_graph_cache(&project_id)
-        .map_err(|e| e.to_string())?
+        .map_err(to_ipc_error)?
         .and_then(|json| serde_json::from_str::<GraphData>(&json).ok())
         .unwrap_or_else(|| GraphData {
             nodes: vec![],
@@ -307,36 +299,16 @@ pub async fn explain_node(
         });
 
     // Load outline items for this file (non-blocking; empty outline is fine)
-    let outline = repo.get_outline_items(&node_id).unwrap_or_default();
-
-    // Build compact context — prefer semantic outline when available
-    let context = if !outline.is_empty() {
-        ContextBuilder::build_node_context_with_outline(
-            &file_content,
-            &file_info.path,
-            &graph,
-            &node_id,
-            &outline,
-        )
-    } else {
-        ContextBuilder::build_node_context(&file_content, &file_info.path, &graph, &node_id)
-    };
-
-    // Build dependency labels list
-    let deps: Vec<String> = graph
-        .edges
-        .iter()
-        .filter(|e| e.source == node_id)
-        .take(5)
-        .filter_map(|e| graph.nodes.iter().find(|n| n.id == e.target))
-        .map(|n| n.label.clone())
-        .collect();
+    let outline = state
+        .scan_repo
+        .get_outline_items(&node_id)
+        .unwrap_or_default();
 
     state
-        .ai_service
-        .explain_node(&cfg, &node_id, &context, &deps)
+        .ai_service_port
+        .explain_node_with_context(&cfg, &file_info, &file_content, &graph, &outline)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -346,29 +318,29 @@ pub async fn chat(
     history: Vec<ChatMessage>,
     state: State<'_, AppState>,
 ) -> Result<engine::models::ChatResponse, String> {
+    use std::path::Path;
+
     let (config, root_path) = {
-        let cfg = state.ai_config.lock().map_err(|e| e.to_string())?.clone();
-        let root = state
-            .project_root
-            .lock()
-            .map_err(|e| e.to_string())?
-            .clone();
+        let cfg = state.ai_config.lock().map_err(to_ipc_error)?.clone();
+        let root = state.project_root.lock().map_err(to_ipc_error)?.clone();
         (cfg, root)
     };
 
     let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
 
-    let repo = ProjectRepository::new(&state.db);
-
-    // Get project root
-    let (_, root, _) = repo
+    // Get project root from DB (fall back to state.project_root if not persisted)
+    let root = state
+        .scan_repo
         .get_project(&project_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Project not found: {}", project_id))?;
-    let root = if !root.is_empty() { root } else { root_path };
+        .map_err(to_ipc_error)?
+        .and_then(|(_, r, _)| if r.is_empty() { None } else { Some(r) })
+        .unwrap_or(root_path);
 
     // Fetch project files from DB
-    let files = repo.get_files(&project_id).map_err(|e| e.to_string())?;
+    let files = state
+        .scan_repo
+        .get_files(&project_id)
+        .map_err(to_ipc_error)?;
 
     // Read file contents for context (limit to first 10 files to avoid overhead)
     let file_contents: Vec<(String, String)> = files
@@ -383,9 +355,10 @@ pub async fn chat(
         .collect();
 
     // Get graph for structure context
-    let graph = repo
+    let graph = state
+        .graph_repo
         .get_graph_cache(&project_id)
-        .map_err(|e| e.to_string())?
+        .map_err(to_ipc_error)?
         .and_then(|json| serde_json::from_str::<GraphData>(&json).ok())
         .unwrap_or_else(|| GraphData {
             nodes: vec![],
@@ -394,30 +367,28 @@ pub async fn chat(
             generated_at: chrono::Utc::now().to_rfc3339(),
         });
 
-    // Build chat context (use &str refs — ContextBuilder::build_chat_context
-    // takes &[(&str, &str)], file_contents lifetime must outlive the call)
-    let context = {
-        let refs: Vec<(&str, &str)> = file_contents
-            .iter()
-            .map(|(a, b)| (a.as_str(), b.as_str()))
-            .collect();
-        ContextBuilder::build_chat_context(&refs, &graph, &message)
-    };
-
     // Add user message to history
     let mut full_history = history;
     full_history.push(ChatMessage {
         id: uuid::Uuid::new_v4().to_string(),
         role: engine::models::ChatRole::User,
-        content: message,
+        content: message.clone(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     });
 
     state
-        .ai_service
-        .chat(&cfg, &full_history, &context)
+        .ai_service_port
+        .chat_with_context(
+            &cfg,
+            &project_id,
+            &root,
+            &file_contents,
+            &graph,
+            &full_history,
+            &message,
+        )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 // MARK: Analysis Commands
@@ -435,12 +406,12 @@ pub fn get_architecture_detection(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<ArchitectureDetectionResponse, String> {
-    let analysis_repo = AnalysisRepositoryAdapter::new(&state.db);
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
+    let analysis_repo = state.analysis_repo.clone();
+    let graph_repo = state.graph_repo.clone();
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .get_architecture_detection(&project_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 /// Thin shim: constructs AnalysisService and delegates to
@@ -451,12 +422,12 @@ pub fn get_impact_analysis(
     node_id: String,
     state: State<'_, AppState>,
 ) -> Result<ImpactAnalysisResponse, String> {
-    let analysis_repo = AnalysisRepositoryAdapter::new(&state.db);
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
+    let analysis_repo = state.analysis_repo.clone();
+    let graph_repo = state.graph_repo.clone();
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .get_impact_analysis(&project_id, &node_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 /// Thin shim: constructs AnalysisService and delegates to
@@ -466,12 +437,12 @@ pub fn get_graph_insights(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<GraphInsightsResponse, String> {
-    let analysis_repo = AnalysisRepositoryAdapter::new(&state.db);
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
+    let analysis_repo = state.analysis_repo.clone();
+    let graph_repo = state.graph_repo.clone();
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .get_graph_insights(&project_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 /// Thin shim: constructs AnalysisService and delegates to
@@ -482,12 +453,12 @@ pub fn export_view(
     format: String,
     state: State<'_, AppState>,
 ) -> Result<ExportPayloadResponse, String> {
-    let analysis_repo = AnalysisRepositoryAdapter::new(&state.db);
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
+    let analysis_repo = state.analysis_repo.clone();
+    let graph_repo = state.graph_repo.clone();
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .export_view(&project_id, format)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 // ─── Observability helpers ──────────────────────────────────────────────────
@@ -503,18 +474,17 @@ mod tests;
 // State extraction, service delegation, and error mapping are owned by the service.
 // Response DTOs imported directly from engine::services to avoid duplication.
 
-use engine::ports::WorkspaceRepositoryAdapter;
 use engine::services::{
     AnnotationResponse, C4ViewResponse, ExecutiveSummaryResponse, HealthTimelineResponse,
     SnapshotDiffResponse, SnapshotResponse, WorkspaceProjectResponse, WorkspaceResponse,
     WorkspaceService,
 };
 
-/// Thin shim: constructs WorkspaceService with WorkspaceRepositoryAdapter and delegates.
+/// Thin shim: constructs WorkspaceService with the trait-object port from AppState
+/// and delegates. After B.7 the port is `state.workspace_repo: Arc<dyn WorkspaceRepository>`.
 macro_rules! workspace_service {
     ($state:expr) => {{
-        let workspace_repo = WorkspaceRepositoryAdapter::new(&$state.db);
-        WorkspaceService::new(workspace_repo)
+        WorkspaceService::new($state.workspace_repo.clone())
     }};
 }
 
@@ -525,14 +495,14 @@ pub fn create_workspace(
 ) -> Result<WorkspaceResponse, String> {
     workspace_service!(state)
         .create_workspace(&name)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
 pub fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<WorkspaceResponse>, String> {
     workspace_service!(state)
         .list_workspaces()
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -543,7 +513,7 @@ pub fn attach_project_to_workspace(
 ) -> Result<(), String> {
     workspace_service!(state)
         .attach_project_to_workspace(&workspace_id, &project_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -553,7 +523,7 @@ pub fn list_workspace_projects(
 ) -> Result<Vec<WorkspaceProjectResponse>, String> {
     workspace_service!(state)
         .list_workspace_projects(&workspace_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -565,7 +535,7 @@ pub fn create_snapshot(
 ) -> Result<SnapshotResponse, String> {
     workspace_service!(state)
         .create_snapshot(&project_id, &label, workspace_id.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -575,7 +545,7 @@ pub fn get_snapshot(
 ) -> Result<Option<SnapshotResponse>, String> {
     workspace_service!(state)
         .get_snapshot(&snapshot_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 // ─── Annotation commands ────────────────────────────────────────────────────────
@@ -591,7 +561,7 @@ pub fn add_comment(
 ) -> Result<AnnotationResponse, String> {
     workspace_service!(state)
         .add_comment(&project_id, &node_id, &author, &text, kind.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -602,7 +572,7 @@ pub fn list_comments(
 ) -> Result<Vec<AnnotationResponse>, String> {
     workspace_service!(state)
         .list_comments(&project_id, node_id.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -613,7 +583,7 @@ pub fn list_snapshots(
 ) -> Result<Vec<SnapshotResponse>, String> {
     workspace_service!(state)
         .list_snapshots(&project_id, workspace_id.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -625,7 +595,7 @@ pub fn get_health_timeline(
 ) -> Result<HealthTimelineResponse, String> {
     workspace_service!(state)
         .get_health_timeline(&project_id, &from, &to)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 // ========================================================================
@@ -639,7 +609,7 @@ pub fn get_executive_summary(
 ) -> Result<ExecutiveSummaryResponse, String> {
     workspace_service!(state)
         .get_executive_summary(&workspace_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -650,7 +620,7 @@ pub fn compare_snapshots(
 ) -> Result<SnapshotDiffResponse, String> {
     workspace_service!(state)
         .compare_snapshots(&base_snapshot_id, &target_snapshot_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -661,5 +631,5 @@ pub fn get_c4_view(
 ) -> Result<C4ViewResponse, String> {
     workspace_service!(state)
         .get_c4_view(&project_id, level)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }

@@ -100,6 +100,7 @@ impl AnthropicProvider {
     }
 }
 
+#[async_trait::async_trait]
 impl AIProvider for AnthropicProvider {
     async fn explain_node(
         &self,
