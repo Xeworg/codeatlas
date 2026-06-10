@@ -46,6 +46,7 @@ pub fn run() {
                 tracing::warn!("Migration warning: {:?}", e);
             }
 
+            let pool = db_pool.clone();
             let app_state = AppState {
                 db: db_pool,
                 scan_status: std::sync::Arc::new(Mutex::new(engine::models::ScanStatus::Idle)),
@@ -54,6 +55,19 @@ pub fn run() {
                 ai_service: engine::ai::AIService::default(),
                 ai_service_port: std::sync::Arc::new(engine::ai::AIService::default())
                     as std::sync::Arc<dyn engine::ai::AIServicePort>,
+                scan_repo: std::sync::Arc::new(engine::ports::ScanRepositoryAdapter::from_arc(
+                    std::sync::Arc::new(pool.clone()),
+                )) as std::sync::Arc<dyn engine::ports::ScanRepository>,
+                graph_repo: std::sync::Arc::new(engine::ports::GraphRepositoryAdapter::from_arc(
+                    std::sync::Arc::new(pool.clone()),
+                ))
+                    as std::sync::Arc<dyn engine::ports::GraphRepository>,
+                analysis_repo: std::sync::Arc::new(
+                    engine::ports::AnalysisRepositoryAdapter::from_arc(std::sync::Arc::new(
+                        pool.clone(),
+                    )),
+                )
+                    as std::sync::Arc<dyn engine::ports::AnalysisRepository>,
             };
 
             app.manage(app_state);

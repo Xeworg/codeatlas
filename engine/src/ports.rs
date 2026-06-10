@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 /// Abstracts the persistence of scan results and project metadata so that
 /// application services (e.g., `ScanService`) are decoupled from the concrete
 /// `ProjectRepository` implementation.
-pub trait ScanRepository {
+pub trait ScanRepository: Send + Sync {
     /// Persist a scan result (project metadata + files + symbols).
     fn save_scan_result(&self, result: &ScanResult) -> Result<()>;
 
@@ -163,7 +163,7 @@ impl ScanRepository for ScanRepositoryAdapter {
 /// Abstracts graph cache persistence and file search so that application
 /// services (e.g., `GraphService`) are decoupled from the concrete
 /// `ProjectRepository` implementation.
-pub trait GraphRepository {
+pub trait GraphRepository: Send + Sync {
     /// Save a serialized graph JSON for a project.
     fn save_graph_cache(&self, project_id: &str, graph_json: &str) -> Result<()>;
 
@@ -549,7 +549,7 @@ impl WorkspaceRepository for WorkspaceRepositoryAdapter {
 /// Abstracts the persistence of architecture detection results and graph
 /// insights so that `AnalysisService` is decoupled from the concrete
 /// `ProjectRepository` implementation.
-pub trait AnalysisRepository {
+pub trait AnalysisRepository: Send + Sync {
     /// Returns a reference to the underlying database pool.
     /// Used by `AnalysisService` to pass to pure analysis functions that
     /// take `&DbPool` directly.
@@ -775,6 +775,94 @@ impl AppStatePort for AppStatePortAdapter {
 // returns a `'static` adapter that holds the pool alive, callable from
 // the trait methods. The tests are minimal: they construct the adapter,
 // call one cheap method on it, and assert the pool is still queryable.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Arc<dyn Trait> impls — enables Arc<dyn Trait> to satisfy S: Trait bounds
+// in service constructors. The blanket impl `impl<T: Trait> Trait for Arc<T>`
+// fails for `T = dyn Trait` because `dyn Trait: ?Sized` and type parameters
+// default to `Sized`. We add explicit impls for `Arc<dyn Trait>` which works
+// because Arc<dyn Trait> is Sized and the impl delegates via Deref.
+// ─────────────────────────────────────────────────────────────────────────────
+
+impl ScanRepository for std::sync::Arc<dyn ScanRepository> {
+    fn save_scan_result(&self, result: &ScanResult) -> Result<()> {
+        (**self).save_scan_result(result)
+    }
+    fn get_project_by_path(&self, root_path: &str) -> Result<Option<ProjectMeta>> {
+        (**self).get_project_by_path(root_path)
+    }
+    fn get_project(&self, project_id: &str) -> Result<Option<(String, String, i64)>> {
+        (**self).get_project(project_id)
+    }
+    fn get_files(&self, project_id: &str) -> Result<Vec<FileInfo>> {
+        (**self).get_files(project_id)
+    }
+    fn get_imports(&self, project_id: &str) -> Result<Vec<ImportInfo>> {
+        (**self).get_imports(project_id)
+    }
+    fn save_import(&self, import: &ImportInfo) -> Result<()> {
+        (**self).save_import(import)
+    }
+    fn get_file_by_id(&self, file_id: &str) -> Result<Option<FileInfo>> {
+        (**self).get_file_by_id(file_id)
+    }
+    fn save_outline_items(&self, file_id: &str, items: &[OutlineItem]) -> Result<()> {
+        (**self).save_outline_items(file_id, items)
+    }
+}
+
+impl GraphRepository for std::sync::Arc<dyn GraphRepository> {
+    fn save_graph_cache(&self, project_id: &str, graph_json: &str) -> Result<()> {
+        (**self).save_graph_cache(project_id, graph_json)
+    }
+    fn get_graph_cache(&self, project_id: &str) -> Result<Option<String>> {
+        (**self).get_graph_cache(project_id)
+    }
+    fn search_files(&self, project_id: &str, query: &str, limit: usize) -> Result<Vec<FileInfo>> {
+        (**self).search_files(project_id, query, limit)
+    }
+    fn get_project_root_for_file(&self, file_id: &str) -> Result<Option<String>> {
+        (**self).get_project_root_for_file(file_id)
+    }
+    fn save_outline_items(&self, file_id: &str, items: &[OutlineItem]) -> Result<()> {
+        (**self).save_outline_items(file_id, items)
+    }
+    fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>> {
+        (**self).get_outline_items(file_id)
+    }
+}
+
+impl AnalysisRepository for std::sync::Arc<dyn AnalysisRepository> {
+    fn pool(&self) -> &DbPool {
+        (**self).pool()
+    }
+    fn save_architecture_detection(
+        &self,
+        project_id: &str,
+        pattern: &str,
+        confidence: f64,
+        evidence_json: &str,
+    ) -> Result<()> {
+        (**self).save_architecture_detection(project_id, pattern, confidence, evidence_json)
+    }
+    fn save_graph_insights(
+        &self,
+        project_id: &str,
+        cycles_json: &str,
+        hotspots_json: &str,
+        avg_coupling: Option<f64>,
+        density: Option<f64>,
+    ) -> Result<()> {
+        (**self).save_graph_insights(project_id, cycles_json, hotspots_json, avg_coupling, density)
+    }
+    #[allow(clippy::type_complexity)]
+    fn get_cached_graph_insights(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<(String, String, f64, f64, String)>> {
+        (**self).get_cached_graph_insights(project_id)
+    }
+}
 
 #[cfg(test)]
 mod from_arc_tests {

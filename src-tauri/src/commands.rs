@@ -8,10 +8,7 @@ use engine::{
     models::{
         ChatMessage, FileInfo, GraphData, NodeExplanation, OutlineItem, ScanResult, ScanStatus,
     },
-    ports::{
-        AnalysisRepositoryAdapter, AppStatePortAdapter, GraphRepositoryAdapter,
-        ScanRepositoryAdapter,
-    },
+    ports::AppStatePortAdapter,
     services::{AnalysisService, GraphService, ScanService},
 };
 
@@ -71,6 +68,12 @@ pub struct AppState {
     /// PR-B Tasks B.10 and B.11.
     #[allow(dead_code)] // consumed in B.10/B.11
     pub ai_service_port: Arc<dyn engine::ai::AIServicePort>,
+    /// Graph repository port — consumed by graph commands in B.6.
+    pub scan_repo: Arc<dyn engine::ports::ScanRepository>,
+    /// Graph repository port — consumed by graph commands in B.6.
+    pub graph_repo: Arc<dyn engine::ports::GraphRepository>,
+    /// Analysis repository port — consumed by analysis commands in B.8.
+    pub analysis_repo: Arc<dyn engine::ports::AnalysisRepository>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -95,7 +98,7 @@ pub struct ScanStatusResponse {
 /// `AppState` mutexes — mutations through the adapter mutate the real state.
 #[tauri::command]
 pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<ScanResult, String> {
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let scan_repo = state.scan_repo.clone();
     // Wrap the real AppState mutexes in Arc so the adapter and AppState share
     // the same inner data. Arc::clone() creates a new handle to the same mutex.
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
@@ -117,7 +120,7 @@ pub async fn open_project_by_path(
     path: String,
     state: State<'_, AppState>,
 ) -> Result<ScanResult, String> {
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
@@ -135,7 +138,7 @@ pub async fn open_project_by_path(
 /// `ScanStatus` enum to a human-readable string response.
 #[tauri::command]
 pub async fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusResponse, String> {
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
@@ -177,8 +180,8 @@ pub async fn get_graph(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<GraphData, String> {
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let graph_repo = state.graph_repo.clone();
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
@@ -193,8 +196,8 @@ pub async fn get_graph(
 /// Thin shim: delegates to `GraphService::get_node_details`.
 #[tauri::command]
 pub fn get_node_details(node_id: String, state: State<'_, AppState>) -> Result<FileInfo, String> {
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let graph_repo = state.graph_repo.clone();
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
@@ -217,8 +220,8 @@ pub fn get_node_outline(
     node_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<OutlineItem>, String> {
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let graph_repo = state.graph_repo.clone();
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
@@ -240,8 +243,8 @@ pub fn search_nodes(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<engine::models::GraphNode>, String> {
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
-    let scan_repo = ScanRepositoryAdapter::new(&state.db);
+    let graph_repo = state.graph_repo.clone();
+    let scan_repo = state.scan_repo.clone();
     let app_state_adapter = AppStatePortAdapter::from_arc_refs(
         &state.scan_status,
         &state.ai_config,
@@ -448,8 +451,8 @@ pub fn get_architecture_detection(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<ArchitectureDetectionResponse, String> {
-    let analysis_repo = AnalysisRepositoryAdapter::new(&state.db);
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
+    let analysis_repo = state.analysis_repo.clone();
+    let graph_repo = state.graph_repo.clone();
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .get_architecture_detection(&project_id)
@@ -464,8 +467,8 @@ pub fn get_impact_analysis(
     node_id: String,
     state: State<'_, AppState>,
 ) -> Result<ImpactAnalysisResponse, String> {
-    let analysis_repo = AnalysisRepositoryAdapter::new(&state.db);
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
+    let analysis_repo = state.analysis_repo.clone();
+    let graph_repo = state.graph_repo.clone();
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .get_impact_analysis(&project_id, &node_id)
@@ -479,8 +482,8 @@ pub fn get_graph_insights(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<GraphInsightsResponse, String> {
-    let analysis_repo = AnalysisRepositoryAdapter::new(&state.db);
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
+    let analysis_repo = state.analysis_repo.clone();
+    let graph_repo = state.graph_repo.clone();
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .get_graph_insights(&project_id)
@@ -495,8 +498,8 @@ pub fn export_view(
     format: String,
     state: State<'_, AppState>,
 ) -> Result<ExportPayloadResponse, String> {
-    let analysis_repo = AnalysisRepositoryAdapter::new(&state.db);
-    let graph_repo = GraphRepositoryAdapter::new(&state.db);
+    let analysis_repo = state.analysis_repo.clone();
+    let graph_repo = state.graph_repo.clone();
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .export_view(&project_id, format)
