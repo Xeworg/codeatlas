@@ -36,14 +36,13 @@ shim refactor and legacy deletion are deferred to B.10/B.11.
 ### B.1 `to_ipc_error` — **DONE**
 - New `src-tauri/src/ipc_error.rs` (96 lines, 5 unit tests).
 - Wired via `pub mod ipc_error;` in `src-tauri/src/lib.rs:7`.
-- `#[allow(dead_code)]` is expected; B.12 will start consuming it.
+- `#[allow(dead_code)]` **removed** in Batch 3 — now actively consumed by
+  `explain_node` and `chat` shims.
 
-### B.2 `AIServicePort` — **PARTIAL (infra done, legacy escape hatch retained)**
-- Trait defined at `engine/src/ai/service.rs:54-99` with the spec signatures.
-- `impl AIServicePort for AIService<R>` at `service.rs:101-142`.
-- **Legacy `explain_node` / `chat` methods retained** at `service.rs:30-52`
-  with docstring noting that the presentation layer migrates in B.10/B.11.
-- **Action in B.10/B.11**: delete the legacy methods once the bodies move.
+### B.2 `AIServicePort` — **DONE** (legacy escape hatch deleted in Batch 3)
+- Trait defined at `engine/src/ai/service.rs:33-75` with the spec signatures.
+- `impl AIServicePort for AIService<R>` at `service.rs:77-155`.
+- Legacy `explain_node` / `chat` methods **deleted** in Batch 3 (commit `aa10096`).
 
 ### B.3 `from_arc` — **DONE**
 - All 4 adapters (`ScanRepositoryAdapter`, `GraphRepositoryAdapter`,
@@ -52,14 +51,11 @@ shim refactor and legacy deletion are deferred to B.10/B.11.
 - `::new(&pool)` preserved for internal tests.
 - 5 new `from_arc_tests` at `engine/src/ports.rs:779-843`.
 
-### B.4 AppState `Arc<dyn AIServicePort>` — **PARTIAL (field added, shim deferred)**
-- `ai_service_port: Arc<dyn engine::ai::AIServicePort>` added at
-  `src-tauri/src/commands.rs:73`.
-- Constructed in `lib.rs:55-56`.
-- Legacy `ai_service: engine::ai::AIService` field kept with `#[allow(dead_code)]`
-  until B.9.
-- **No shim refactor on `explain_node` / `chat`** — will land atomically
-  with B.10/B.11.
+### B.4 AppState `Arc<dyn AIServicePort>` — **DONE** (shim refactored in Batch 3)
+- `ai_service_port: Arc<dyn engine::ai::AIServicePort>` field at `commands.rs:52`.
+- Constructed in `lib.rs:54-55`.
+- Shims for `explain_node` and `chat` now delegate to `ai_service_port`
+  (Batch 3, commit `aa10096`).
 
 ### B.5 AppState `Arc<dyn ScanRepository>` — **DONE** (commit `bf980bc`, Batch 1)
 ### B.6 AppState `Arc<dyn GraphRepository>` — **DONE** (commit `bf980bc`, Batch 1)
@@ -88,9 +84,38 @@ commands required ZERO call-site changes. Only the unused
 **Macro strategy chosen**: Option A (macro takes `$state` and extracts
 `state.workspace_repo.clone()` internally). This kept the diff small
 and avoided touching the 13 command bodies.
-### B.9 Drop `pub db` + `pub ai_service` — **PENDING** (Batch 3)
-### B.10 Move `explain_node` body to engine — **PENDING** (Batch 4)
-### B.11 Move `chat` body to engine — **PENDING** (Batch 4)
+
+## Batch 3 complete (commit `aa10096`) — B.9+B.10+B.11 (atomic)
+
+**Why merged**: B.9 alone would break the build because `explain_node`
+(line 299) and `chat` (line 379) still use `state.db` to construct
+`ProjectRepository::new(&state.db)`. Dropping `db` without migrating
+those consumers first causes a compile error. Therefore B.9 is
+**atomically merged with B.10 and B.11** — drop the field AND migrate
+its consumers in the same commit.
+
+**What changed**:
+- `AppState` loses `pub db: DbPool` and `pub ai_service: engine::ai::AIService`
+- `AppState` docstring updated: 3 `Arc<Mutex<T>>` primitives + 5 `Arc<dyn>` ports
+- `explain_node` (78 lines) and `chat` (80 lines) command bodies moved to
+  `AIServicePort::explain_node_with_context` and `AIServicePort::chat_with_context`
+- Legacy `AIService::explain_node` and `AIService::chat` methods **deleted** (B.2 decision)
+- Both commands are now ~40-line shims calling
+  `state.ai_service_port.*_with_context(...).map_err(to_ipc_error)`
+- `to_ipc_error` now actively consumed (removed `#[allow(dead_code)]`)
+- `#[allow(dead_code)]` removed from `AIServicePort` trait (now actively implemented)
+- `ContextBuilder` removed from `commands.rs` imports (moved to engine layer)
+
+**New engine additions**:
+- `AIService::resolver()` pub(crate) accessor to expose resolver to `AIServicePort` impl
+- `ScanRepository::get_outline_items()` — needed by the `explain_node` shim
+- `ScanRepositoryAdapter`, `Arc<dyn ScanRepository>`, and `NoOpScanRepo` updated
+- `#[async_trait]` added to `AIProvider` trait to ensure futures are `Send`
+
+**Files changed**: 9 files, +267/−188 lines
+
+**Tests**: 193 engine tests pass, 29 src-tauri tests pass
+| `aa10096`  | B.9+B.10+B.11 | `refactor(ai): move explain_node and chat to AIServicePort, drop legacy fields` |
 ### B.12 Atomic error contract — **PENDING** (Batch 4, HIGH)
 ### B.13 Delete `src/services/*.ts` (frontend) — **PENDING** (PR-C)
 ### B.14 PR-B-core verification — **PENDING** (Batch 5)
