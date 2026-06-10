@@ -10,10 +10,9 @@ use engine::{
     services::{AnalysisService, GraphService, ScanService},
 };
 
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use crate::ipc_error::to_ipc_error;
+
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 // ─── Global state ──────────────────────────────────────────────────────────
@@ -90,7 +89,7 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         &state.project_root,
     );
     let service = ScanService::new(scan_repo, app_state_adapter);
-    service.scan_project(&path).map_err(|e| e.to_string())
+    service.scan_project(&path).map_err(to_ipc_error)
 }
 
 /// Reopen a previously indexed project by root path.
@@ -110,9 +109,7 @@ pub async fn open_project_by_path(
         &state.project_root,
     );
     let service = ScanService::new(scan_repo, app_state_adapter);
-    service
-        .open_project_by_path(&path)
-        .map_err(|e| e.to_string())
+    service.open_project_by_path(&path).map_err(to_ipc_error)
 }
 
 /// Read current scan status.
@@ -128,7 +125,7 @@ pub async fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusRes
         &state.project_root,
     );
     let service = ScanService::new(scan_repo, app_state_adapter);
-    let status = service.get_scan_status().map_err(|e| e.to_string())?;
+    let status = service.get_scan_status().map_err(to_ipc_error)?;
     let status_str = match status {
         engine::models::ScanStatus::Idle => "idle",
         engine::models::ScanStatus::Scanning => "scanning",
@@ -171,7 +168,7 @@ pub async fn get_graph(
         &state.project_root,
     );
     let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
-    service.get_graph(&project_id).map_err(|e| e.to_string())
+    service.get_graph(&project_id).map_err(to_ipc_error)
 }
 
 /// Get file metadata for a node.
@@ -187,9 +184,7 @@ pub fn get_node_details(node_id: String, state: State<'_, AppState>) -> Result<F
         &state.project_root,
     );
     let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
-    service
-        .get_node_details(&node_id)
-        .map_err(|e| e.to_string())
+    service.get_node_details(&node_id).map_err(to_ipc_error)
 }
 
 /// Get outline items for a node.
@@ -213,7 +208,7 @@ pub fn get_node_outline(
     let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
     service
         .get_node_outline(&node_id, None)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 /// Search files by name substring (case-insensitive).
@@ -236,7 +231,7 @@ pub fn search_nodes(
     let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
     service
         .search_nodes(&project_id, &query, limit)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 // MARK: AI Commands
@@ -246,7 +241,7 @@ pub fn configure_ai(
     config: engine::models::AIConfig,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut ai_config = state.ai_config.lock().map_err(|e| e.to_string())?;
+    let mut ai_config = state.ai_config.lock().map_err(to_ipc_error)?;
     *ai_config = Some(config);
     Ok(())
 }
@@ -255,7 +250,7 @@ pub fn configure_ai(
 pub fn get_ai_config(
     state: State<'_, AppState>,
 ) -> Result<Option<engine::models::AIConfig>, String> {
-    let config = state.ai_config.lock().map_err(|e| e.to_string())?;
+    let config = state.ai_config.lock().map_err(to_ipc_error)?;
     Ok(config.clone())
 }
 
@@ -265,16 +260,11 @@ pub async fn explain_node(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<NodeExplanation, String> {
-    use crate::ipc_error::to_ipc_error;
     use std::path::Path;
 
     let (config, root_path) = {
-        let cfg = state.ai_config.lock().map_err(|e| e.to_string())?.clone();
-        let root = state
-            .project_root
-            .lock()
-            .map_err(|e| e.to_string())?
-            .clone();
+        let cfg = state.ai_config.lock().map_err(to_ipc_error)?.clone();
+        let root = state.project_root.lock().map_err(to_ipc_error)?.clone();
         (cfg, root)
     };
 
@@ -284,7 +274,7 @@ pub async fn explain_node(
     let file_info = state
         .scan_repo
         .get_file_by_id(&node_id)
-        .map_err(|e| e.to_string())?
+        .map_err(to_ipc_error)?
         .ok_or_else(|| format!("File not found: {}", node_id))?;
 
     // Read actual file content from disk
@@ -299,7 +289,7 @@ pub async fn explain_node(
     let graph = state
         .graph_repo
         .get_graph_cache(&project_id)
-        .map_err(|e| e.to_string())?
+        .map_err(to_ipc_error)?
         .and_then(|json| serde_json::from_str::<GraphData>(&json).ok())
         .unwrap_or_else(|| GraphData {
             nodes: vec![],
@@ -328,16 +318,11 @@ pub async fn chat(
     history: Vec<ChatMessage>,
     state: State<'_, AppState>,
 ) -> Result<engine::models::ChatResponse, String> {
-    use crate::ipc_error::to_ipc_error;
     use std::path::Path;
 
     let (config, root_path) = {
-        let cfg = state.ai_config.lock().map_err(|e| e.to_string())?.clone();
-        let root = state
-            .project_root
-            .lock()
-            .map_err(|e| e.to_string())?
-            .clone();
+        let cfg = state.ai_config.lock().map_err(to_ipc_error)?.clone();
+        let root = state.project_root.lock().map_err(to_ipc_error)?.clone();
         (cfg, root)
     };
 
@@ -347,7 +332,7 @@ pub async fn chat(
     let root = state
         .scan_repo
         .get_project(&project_id)
-        .map_err(|e| e.to_string())?
+        .map_err(to_ipc_error)?
         .and_then(|(_, r, _)| if r.is_empty() { None } else { Some(r) })
         .unwrap_or(root_path);
 
@@ -355,7 +340,7 @@ pub async fn chat(
     let files = state
         .scan_repo
         .get_files(&project_id)
-        .map_err(|e| e.to_string())?;
+        .map_err(to_ipc_error)?;
 
     // Read file contents for context (limit to first 10 files to avoid overhead)
     let file_contents: Vec<(String, String)> = files
@@ -373,7 +358,7 @@ pub async fn chat(
     let graph = state
         .graph_repo
         .get_graph_cache(&project_id)
-        .map_err(|e| e.to_string())?
+        .map_err(to_ipc_error)?
         .and_then(|json| serde_json::from_str::<GraphData>(&json).ok())
         .unwrap_or_else(|| GraphData {
             nodes: vec![],
@@ -426,7 +411,7 @@ pub fn get_architecture_detection(
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .get_architecture_detection(&project_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 /// Thin shim: constructs AnalysisService and delegates to
@@ -442,7 +427,7 @@ pub fn get_impact_analysis(
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .get_impact_analysis(&project_id, &node_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 /// Thin shim: constructs AnalysisService and delegates to
@@ -457,7 +442,7 @@ pub fn get_graph_insights(
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .get_graph_insights(&project_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 /// Thin shim: constructs AnalysisService and delegates to
@@ -473,7 +458,7 @@ pub fn export_view(
     let service = AnalysisService::new(analysis_repo, graph_repo);
     service
         .export_view(&project_id, format)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 // ─── Observability helpers ──────────────────────────────────────────────────
@@ -510,14 +495,14 @@ pub fn create_workspace(
 ) -> Result<WorkspaceResponse, String> {
     workspace_service!(state)
         .create_workspace(&name)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
 pub fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<WorkspaceResponse>, String> {
     workspace_service!(state)
         .list_workspaces()
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -528,7 +513,7 @@ pub fn attach_project_to_workspace(
 ) -> Result<(), String> {
     workspace_service!(state)
         .attach_project_to_workspace(&workspace_id, &project_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -538,7 +523,7 @@ pub fn list_workspace_projects(
 ) -> Result<Vec<WorkspaceProjectResponse>, String> {
     workspace_service!(state)
         .list_workspace_projects(&workspace_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -550,7 +535,7 @@ pub fn create_snapshot(
 ) -> Result<SnapshotResponse, String> {
     workspace_service!(state)
         .create_snapshot(&project_id, &label, workspace_id.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -560,7 +545,7 @@ pub fn get_snapshot(
 ) -> Result<Option<SnapshotResponse>, String> {
     workspace_service!(state)
         .get_snapshot(&snapshot_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 // ─── Annotation commands ────────────────────────────────────────────────────────
@@ -576,7 +561,7 @@ pub fn add_comment(
 ) -> Result<AnnotationResponse, String> {
     workspace_service!(state)
         .add_comment(&project_id, &node_id, &author, &text, kind.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -587,7 +572,7 @@ pub fn list_comments(
 ) -> Result<Vec<AnnotationResponse>, String> {
     workspace_service!(state)
         .list_comments(&project_id, node_id.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -598,7 +583,7 @@ pub fn list_snapshots(
 ) -> Result<Vec<SnapshotResponse>, String> {
     workspace_service!(state)
         .list_snapshots(&project_id, workspace_id.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -610,7 +595,7 @@ pub fn get_health_timeline(
 ) -> Result<HealthTimelineResponse, String> {
     workspace_service!(state)
         .get_health_timeline(&project_id, &from, &to)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 // ========================================================================
@@ -624,7 +609,7 @@ pub fn get_executive_summary(
 ) -> Result<ExecutiveSummaryResponse, String> {
     workspace_service!(state)
         .get_executive_summary(&workspace_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -635,7 +620,7 @@ pub fn compare_snapshots(
 ) -> Result<SnapshotDiffResponse, String> {
     workspace_service!(state)
         .compare_snapshots(&base_snapshot_id, &target_snapshot_id)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }
 
 #[tauri::command]
@@ -646,5 +631,5 @@ pub fn get_c4_view(
 ) -> Result<C4ViewResponse, String> {
     workspace_service!(state)
         .get_c4_view(&project_id, level)
-        .map_err(|e| e.to_string())
+        .map_err(to_ipc_error)
 }

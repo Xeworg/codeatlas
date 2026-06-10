@@ -16,6 +16,27 @@
 
 use engine::AppError;
 
+/// Converts any error type to `AppError` for IPC serialization.
+///
+/// This trait allows `to_ipc_error` to accept both `AppError` (the common case
+/// from service-layer errors) and `PoisonError` (from mutex lock operations)
+/// through a single interface.
+pub(crate) trait ToAppError {
+    fn to_app_error(self) -> AppError;
+}
+
+impl ToAppError for AppError {
+    fn to_app_error(self) -> AppError {
+        self
+    }
+}
+
+impl<T> ToAppError for std::sync::PoisonError<T> {
+    fn to_app_error(self) -> AppError {
+        AppError::Internal(self.to_string())
+    }
+}
+
 /// Serialize an `AppError` into the canonical `IpcErrorPayload` JSON
 /// string for transport across the Tauri IPC boundary.
 ///
@@ -23,12 +44,13 @@ use engine::AppError;
 /// presentation layer can always return a `String` error to Tauri
 /// without panicking on a serialization bug. The fallback is observable
 /// in tests as a last-resort guard.
-pub(crate) fn to_ipc_error(e: AppError) -> String {
-    match serde_json::to_string(&e) {
+pub(crate) fn to_ipc_error<E: ToAppError>(e: E) -> String {
+    let app_error = e.to_app_error();
+    match serde_json::to_string(&app_error) {
         Ok(s) => s,
         Err(_) => serde_json::json!({
             "code": "INTERNAL",
-            "message": format!("Failed to serialize AppError: {}", e),
+            "message": format!("Failed to serialize AppError: {}", app_error),
             "details": null,
         })
         .to_string(),
