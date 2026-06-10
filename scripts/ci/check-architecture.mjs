@@ -15,7 +15,7 @@
 //   0 — no violations found
 //   1 — at least one forbidden pattern detected (or self-test failed)
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,10 +23,30 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const REPO_ROOT = resolve(__dirname, "..", "..");
 
-// Files scanned in default mode.
+// Files scanned in default mode (Rust).
 const SCAN_TARGETS = [
   resolve(REPO_ROOT, "src-tauri/src/commands.rs"),
 ];
+
+// Recursively collect all TypeScript files under src/.
+function collectTSTargets(dir) {
+  const results = [];
+  const entries = readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...collectTSTargets(fullPath));
+    } else if (
+      entry.name.endsWith(".ts") ||
+      entry.name.endsWith(".tsx")
+    ) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
+
+const SCAN_TARGETS_TS = collectTSTargets(resolve(REPO_ROOT, "src"));
 
 // Forbidden Rust import patterns. Each entry: { id, regex, description }.
 // `regex` is matched against each line of the scanned file. Multi-line
@@ -62,6 +82,12 @@ const FORBIDDEN_PATTERNS = [
     description:
       "Do not import the concrete AIService struct. Use Arc<dyn AIServicePort> (PR-B) or the existing engine::ai module re-exports.",
   },
+  {
+    id: "FRONTEND_SERVICES_IMPORT",
+    regex: /from\s+['"](@\/|\.\.\/)services/,
+    description:
+      "Frontend imports from src/services/ are forbidden — use @/lib/tauri-api directly.",
+  },
 ];
 
 function scanFile(filePath) {
@@ -92,6 +118,9 @@ function runDefaultScan() {
   for (const target of SCAN_TARGETS) {
     allViolations.push(...scanFile(target));
   }
+  for (const target of SCAN_TARGETS_TS) {
+    allViolations.push(...scanFile(target));
+  }
   if (allViolations.length === 0) {
     console.log("Architecture guard: no violations found.");
     process.exit(0);
@@ -110,34 +139,64 @@ function runDefaultScan() {
 }
 
 function runSelfTest() {
-  const forbiddenFixture = resolve(
+  const forbiddenFixtureRS = resolve(
     __dirname,
     "__fixtures__/forbidden.rs",
   );
-  const cleanFixture = resolve(__dirname, "__fixtures__/clean.rs");
+  const cleanFixtureRS = resolve(__dirname, "__fixtures__/clean.rs");
+  const forbiddenFixtureTS = resolve(
+    __dirname,
+    "__fixtures__/forbidden.ts",
+  );
+  const cleanFixtureTS = resolve(__dirname, "__fixtures__/clean.ts");
 
-  const forbiddenHits = scanFile(forbiddenFixture);
-  const cleanHits = scanFile(cleanFixture);
+  const forbiddenHitsRS = scanFile(forbiddenFixtureRS);
+  const cleanHitsRS = scanFile(cleanFixtureRS);
+  const forbiddenHitsTS = scanFile(forbiddenFixtureTS);
+  const cleanHitsTS = scanFile(cleanFixtureTS);
 
   let failed = false;
-  if (forbiddenHits.length === 0) {
+
+  // Rust fixtures
+  if (forbiddenHitsRS.length === 0) {
     console.error(
-      "Self-test FAILED: expected forbidden fixture to produce violations, got 0.",
+      "Self-test FAILED [Rust]: expected forbidden fixture to produce violations, got 0.",
     );
     failed = true;
   } else {
     console.log(
-      `Self-test OK: forbidden fixture produced ${forbiddenHits.length} violations.`,
+      `Self-test OK [Rust]: forbidden fixture produced ${forbiddenHitsRS.length} violations.`,
     );
   }
-  if (cleanHits.length !== 0) {
+  if (cleanHitsRS.length !== 0) {
     console.error(
-      `Self-test FAILED: expected clean fixture to produce 0 violations, got ${cleanHits.length}.`,
+      `Self-test FAILED [Rust]: expected clean fixture to produce 0 violations, got ${cleanHitsRS.length}.`,
     );
     failed = true;
   } else {
-    console.log("Self-test OK: clean fixture produced 0 violations.");
+    console.log("Self-test OK [Rust]: clean fixture produced 0 violations.");
   }
+
+  // TypeScript fixtures
+  if (forbiddenHitsTS.length === 0) {
+    console.error(
+      "Self-test FAILED [TS]: expected forbidden.ts fixture to produce violations, got 0.",
+    );
+    failed = true;
+  } else {
+    console.log(
+      `Self-test OK [TS]: forbidden fixture produced ${forbiddenHitsTS.length} violations.`,
+    );
+  }
+  if (cleanHitsTS.length !== 0) {
+    console.error(
+      `Self-test FAILED [TS]: expected clean.ts fixture to produce 0 violations, got ${cleanHitsTS.length}.`,
+    );
+    failed = true;
+  } else {
+    console.log("Self-test OK [TS]: clean fixture produced 0 violations.");
+  }
+
   process.exit(failed ? 1 : 0);
 }
 
