@@ -198,7 +198,32 @@ is deferred to B.13.3 (arch guard script — single source of truth, not a test 
 
 | `e51575f`  | B.13.2 | `refactor(frontend): migrate 9 hooks/stores from services/ to @/lib/tauri-api` |
 
-**B.13.3** (arch guard: delete 5 `src/services/*.ts` + update arch script) — PENDING
+#### PR-C Batch 3 complete (commit `fe6fb74`)
+
+**Task**: B.13.3 — delete 5 `src/services/*.ts` files + extend arch guard for TypeScript.
+
+**What changed**:
+- 5 service files deleted: `aiService.ts` (−50), `analysisService.ts` (−29), `graphService.ts` (−72), `projectService.ts` (−68), `snapshotService.ts` (−38) = **−257 lines**
+- Empty `src/services/__tests__/` and `src/services/` directories removed
+- `scripts/ci/check-architecture.mjs` extended with:
+  - `SCAN_TARGETS_TS`: recursive walker collecting all `src/**/*.{ts,tsx}` files via `readdirSync`
+  - New `FORBIDDEN_PATTERNS` entry: `FRONTEND_SERVICES_IMPORT` with regex `/from\s+['"](@\/|\.\.\/)services/` to catch both `@/services/...` and `../services/...` import paths
+  - `runDefaultScan` now iterates both `SCAN_TARGETS` (Rust) and `SCAN_TARGETS_TS` (TypeScript)
+  - `runSelfTest` now verifies both Rust fixtures (`forbidden.rs`, `clean.rs`) and TypeScript fixtures (`forbidden.ts`, `clean.ts`)
+- 2 new TS fixtures added: `__fixtures__/forbidden.ts` (violating import) + `__fixtures__/clean.ts` (clean import)
+- `src/lib/tauri-api.ts` untouched (migration target from B.13.2)
+- 9 hooks/stores untouched (already migrated in B.13.2)
+- `src/lib/__tests__/tauri-api-bridge.test.ts` untouched (renamed in B.13.1)
+
+**Boundary now provably absent**: Arch guard scans both Rust (`commands.rs`) and TypeScript (`src/**/*.{ts,tsx}`) for the forbidden pattern. The `src/services/` layer is gone; no remaining references.
+
+**Files changed**: 8 files, +78/−269 lines (net −191)
+
+**Tests**: 367 tests passing (unchanged from B.13.2)
+
+| `fe6fb74`  | B.13.3 | `refactor(frontend): delete src/services/ layer and extend arch guard for TS` |
+
+**B.13** (delete `src/services/*.ts` + arch guard) — **ALL BATCHES COMPLETE**
 
 ### B.14 PR-B-core verification — **DONE** (commit `6c9a553`, Batch 5 — verification only, no new commit)
 
@@ -245,7 +270,7 @@ is deferred to B.13.3 (arch guard script — single source of truth, not a test 
 
 B.13.1 (rename test file) — **DONE** (commit `cb82991`)
 B.13.2 (import migration) — **DONE** (commit `e51575f`)
-B.13.3 (arch guard: delete 5 `src/services/*.ts` + update arch script) — PENDING
+B.13.3 (arch guard: delete 5 `src/services/*.ts` + update arch script) — **DONE** (commit `fe6fb74`)
 
 #### Overall Verdict
 
