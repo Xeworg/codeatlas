@@ -20,7 +20,8 @@ declare const setTimeout: ReturnType<typeof vi.fn>
 // Mock aiService only — tauri-api (toApiError, toUserMessage) is tested REAL
 // ─────────────────────────────────────────────────────────────────────────────
 
-vi.mock('../../services/aiService', () => ({
+vi.mock('@/lib/tauri-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tauri-api')>()),
   explainNode: vi.fn(),
   chat: vi.fn(),
   configureAI: vi.fn(),
@@ -219,7 +220,8 @@ describe('B4: Stale-result protection — shared guard across explain calls', ()
     // We test this by using fake timers to control async resolution order.
     vi.useFakeTimers()
 
-    vi.mock('../../services/aiService', () => ({
+    vi.mock('@/lib/tauri-api', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/lib/tauri-api')>()),
       explainNode: vi.fn(),
       chat: vi.fn(),
       configureAI: vi.fn(),
@@ -229,7 +231,7 @@ describe('B4: Stale-result protection — shared guard across explain calls', ()
     const { useAI } = await import('../../hooks/useAI')
     const { act } = await import('@testing-library/react')
     const { renderHook } = await import('@testing-library/react')
-    const { explainNode } = await import('../../services/aiService')
+    const { explainNode } = await import('@/lib/tauri-api')
 
     // Call 1 starts (slow, resolves after 100ms)
     vi.mocked(explainNode)
@@ -315,7 +317,8 @@ describe('B5: ChatPanel error handling — use thrown error, not stale hook stat
     // This test verifies sendChat actually throws (not returns null) so ChatPanel
     // can use the thrown error directly without reading hook state.
 
-    vi.mock('../../services/aiService', () => ({
+    vi.mock('@/lib/tauri-api', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/lib/tauri-api')>()),
       explainNode: vi.fn(),
       chat: vi.fn(),
       configureAI: vi.fn(),
@@ -325,7 +328,7 @@ describe('B5: ChatPanel error handling — use thrown error, not stale hook stat
     const { useAI } = await import('../../hooks/useAI')
     const { act } = await import('@testing-library/react')
     const { renderHook } = await import('@testing-library/react')
-    const { chat } = await import('../../services/aiService')
+    const { chat } = await import('@/lib/tauri-api')
 
     // Mock chat to throw (network error)
     const error = new Error('{"code":"UNREACHABLE","message":"Connection failed"}')

@@ -6,10 +6,10 @@ import { useCallback } from 'react'
 import { useProjectStore } from '../stores/projectStore'
 import { useGraphStore } from '../stores/graphStore'
 import {
-  scanProject as _scanProject,
-  openProjectByPath as _openProjectByPath,
-} from '../services/projectService'
-import { getGraph as _getGraph } from '../services/graphService'
+  scanProject,
+  openProjectByPath,
+  getGraph,
+} from '@/lib/tauri-api'
 import { getErrorMessage } from '../lib/tauri-api'
 import { buildLayout } from '../lib/graph-layout'
 import type { ScanResult } from '../lib/types'
@@ -40,7 +40,7 @@ export function useProject(): UseProjectReturn {
       // Step 1: Try to reopen an already-indexed project
       let reopenResult: ScanResult | null = null
       try {
-        reopenResult = await _openProjectByPath(path)
+        reopenResult = await openProjectByPath(path)
       } catch (reopenErr) {
         const reopenErrMsg = getErrorMessage(reopenErr)
         if (!reopenErrMsg.includes('No project found')) {
@@ -63,7 +63,7 @@ export function useProject(): UseProjectReturn {
         }
         if (reopenResult.status === 'ready' && reopenResult.projectId) {
           try {
-            const graph = await _getGraph(reopenResult.projectId)
+            const graph = await getGraph(reopenResult.projectId)
             const laid = buildLayout(graph)
             setGraphData(laid)
           } catch (graphErr) {
@@ -81,7 +81,7 @@ export function useProject(): UseProjectReturn {
       setStatus('scanning')
 
       try {
-        const result = await _scanProject(path)
+        const result = await scanProject(path)
         setScanResult(result)
         setStatus(result.status)
 
@@ -92,7 +92,7 @@ export function useProject(): UseProjectReturn {
         if (result.status === 'ready' && result.projectId) {
           setLoading(true)
           try {
-            const graph = await _getGraph(result.projectId)
+            const graph = await getGraph(result.projectId)
             const laid = buildLayout(graph)
             setGraphData(laid)
           } catch (e) {
