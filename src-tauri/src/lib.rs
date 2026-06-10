@@ -68,6 +68,12 @@ pub fn run() {
                     )),
                 )
                     as std::sync::Arc<dyn engine::ports::AnalysisRepository>,
+                workspace_repo: std::sync::Arc::new(
+                    engine::ports::WorkspaceRepositoryAdapter::from_arc(std::sync::Arc::new(
+                        pool.clone(),
+                    )),
+                )
+                    as std::sync::Arc<dyn engine::ports::WorkspaceRepository>,
             };
 
             app.manage(app_state);

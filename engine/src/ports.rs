@@ -261,7 +261,7 @@ impl GraphRepository for GraphRepositoryAdapter {
 ///
 /// All methods are implemented by `WorkspaceRepositoryAdapter` which delegates
 /// to `ProjectRepository`. This port enables full testability with mock doubles.
-pub trait WorkspaceRepository {
+pub trait WorkspaceRepository: Send + Sync {
     /// Create a new workspace. Returns (id, name, created_at).
     fn create_workspace(&self, name: &str) -> Result<(String, String, String)>;
 
@@ -861,6 +861,125 @@ impl AnalysisRepository for std::sync::Arc<dyn AnalysisRepository> {
         project_id: &str,
     ) -> Result<Option<(String, String, f64, f64, String)>> {
         (**self).get_cached_graph_insights(project_id)
+    }
+}
+
+impl WorkspaceRepository for std::sync::Arc<dyn WorkspaceRepository> {
+    fn create_workspace(&self, name: &str) -> Result<(String, String, String)> {
+        (**self).create_workspace(name)
+    }
+
+    fn list_workspaces(&self) -> Result<Vec<(String, String, String)>> {
+        (**self).list_workspaces()
+    }
+
+    fn attach_project_to_workspace(&self, workspace_id: &str, project_id: &str) -> Result<()> {
+        (**self).attach_project_to_workspace(workspace_id, project_id)
+    }
+
+    fn list_workspace_projects(&self, workspace_id: &str) -> Result<Vec<(String, String)>> {
+        (**self).list_workspace_projects(workspace_id)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn create_snapshot(
+        &self,
+        project_id: &str,
+        label: &str,
+        workspace_id: Option<&str>,
+    ) -> Result<(
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+    )> {
+        (**self).create_snapshot(project_id, label, workspace_id)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn get_snapshot(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<
+        Option<(
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+        )>,
+    > {
+        (**self).get_snapshot(snapshot_id)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn list_snapshots(
+        &self,
+        project_id: &str,
+        workspace_id: Option<&str>,
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+        )>,
+    > {
+        (**self).list_snapshots(project_id, workspace_id)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn add_comment(
+        &self,
+        project_id: &str,
+        node_id: &str,
+        author: &str,
+        text: &str,
+        kind: Option<&str>,
+    ) -> Result<(String, String, String, String, String, String, String)> {
+        (**self).add_comment(project_id, node_id, author, text, kind)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn list_comments(
+        &self,
+        project_id: &str,
+        node_id: Option<&str>,
+    ) -> Result<Vec<(String, String, String, String, String, String, String)>> {
+        (**self).list_comments(project_id, node_id)
+    }
+
+    fn get_health_timeline(
+        &self,
+        project_id: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(String, String, f64, f64, f64, i64, i64)>> {
+        (**self).get_health_timeline(project_id, from, to)
+    }
+
+    fn compute_executive_summary(
+        &self,
+        workspace_id: &str,
+    ) -> Result<crate::db::queries::ExecutiveSummary> {
+        (**self).compute_executive_summary(workspace_id)
+    }
+
+    fn compare_snapshots(
+        &self,
+        base_snapshot_id: &str,
+        target_snapshot_id: &str,
+    ) -> Result<crate::db::queries::SnapshotDiff> {
+        (**self).compare_snapshots(base_snapshot_id, target_snapshot_id)
+    }
+
+    fn get_c4_view(&self, project_id: &str, level: u8) -> Result<crate::db::queries::C4View> {
+        (**self).get_c4_view(project_id, level)
     }
 }
 

@@ -74,6 +74,8 @@ pub struct AppState {
     pub graph_repo: Arc<dyn engine::ports::GraphRepository>,
     /// Analysis repository port — consumed by analysis commands in B.8.
     pub analysis_repo: Arc<dyn engine::ports::AnalysisRepository>,
+    /// Workspace repository port — consumed by 13 workspace commands in B.7.
+    pub workspace_repo: Arc<dyn engine::ports::WorkspaceRepository>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -519,18 +521,17 @@ mod tests;
 // State extraction, service delegation, and error mapping are owned by the service.
 // Response DTOs imported directly from engine::services to avoid duplication.
 
-use engine::ports::WorkspaceRepositoryAdapter;
 use engine::services::{
     AnnotationResponse, C4ViewResponse, ExecutiveSummaryResponse, HealthTimelineResponse,
     SnapshotDiffResponse, SnapshotResponse, WorkspaceProjectResponse, WorkspaceResponse,
     WorkspaceService,
 };
 
-/// Thin shim: constructs WorkspaceService with WorkspaceRepositoryAdapter and delegates.
+/// Thin shim: constructs WorkspaceService with the trait-object port from AppState
+/// and delegates. After B.7 the port is `state.workspace_repo: Arc<dyn WorkspaceRepository>`.
 macro_rules! workspace_service {
     ($state:expr) => {{
-        let workspace_repo = WorkspaceRepositoryAdapter::new(&$state.db);
-        WorkspaceService::new(workspace_repo)
+        WorkspaceService::new($state.workspace_repo.clone())
     }};
 }
 
