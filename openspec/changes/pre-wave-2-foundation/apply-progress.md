@@ -1,6 +1,6 @@
 # Apply Progress — pre-wave-2-foundation PR-B-core
 
-## Status: B.14 verified — ready for PR opening
+## Status: B.13.2 complete — B.13.3 pending
 
 PR-A (#5) is **merged** to main (commits `0994db2`, `2c924a9`, `b1798cb`, `5258c6a`).
 PR-B is now in active development on branch `feat/pre-wave-2-pr-b-refactor`.
@@ -147,7 +147,59 @@ its consumers in the same commit.
 
 **Files changed**: 2 files, +63/−56 lines
 | `6c9a553`  | B.12 | `refactor(commands): atomic rollout of structured IpcErrorPayload` |
-### B.13 Delete `src/services/*.ts` (frontend) — **PENDING** (PR-C)
+### B.13 Delete `src/services/*.ts` (frontend) — **B.13.1 + B.13.2 DONE**
+
+B.13 is the PR-C frontend services deletion workstream. It is being executed in
+batches against branch `feat/pre-wave-2-pr-c-frontend-services` (targeting
+`feat/pre-wave-2-pr-b-refactor`).
+
+#### PR-C Batch 1 complete (commit `cb82991`)
+
+**Task**: B.13.1 — rename `services-boundary.test.ts` → `tauri-api-bridge.test.ts`
+and reduce from 430 lines (27 tests) to ~93 lines (3 tests: 1 bridge smoke + 2
+parser bridge tests).
+
+**What changed**:
+- `git mv src/services/__tests__/services-boundary.test.ts src/lib/__tests__/tauri-api-bridge.test.ts`
+- File content reduced from 430 lines to 93 lines (−337 lines)
+- 3 keeper tests: bridge smoke (tauriApi.scanProject callable via @tauri-apps/api/core mock)
+  and 2 parser bridge tests (toApiError strips Tauri prefix + parses JSON, fallback for non-JSON)
+- 24 tests deleted (27 original − 3 kept = 24 removed); all were mock-setup boilerplate
+  from the T19 RED phase that never reached GREEN
+- Pre-existing path bug fixed: `'../../lib/tauri-api'` → `'../tauri-api'`
+- Header comment rewritten to document bridge purpose; T19 RED framing removed
+
+**Files changed**: 1 file renamed (+94/−430 lines, −336 net)
+
+**Tests**: 3 passing in tauri-api-bridge.test.ts; full suite: 367 vs baseline 391
+(−24 = 27 deleted − 3 kept). Math checks out.
+
+**Static guard test deferred**: The 3rd test from the spec (static guard verification)
+is deferred to B.13.3 (arch guard script — single source of truth, not a test file).
+
+| `cb82991`  | B.13.1 | `test(frontend): rename services-boundary to tauri-api-bridge and reduce to bridge tests` |
+
+#### PR-C Batch 2 complete (commit `e51575f`)
+
+**Task**: B.13.2 — migrate 10 import statements in 9 files from `'../services/*'` to `'@/lib/tauri-api'`.
+
+**What changed**:
+- All 9 hooks/stores now import from `@/lib/tauri-api` instead of `../services/*`
+- 7 `_`-prefixed aliases dropped (no longer needed; tauri-api exports have unique names)
+- `useProject.ts`: 2 separate import lines merged into 1
+- `useSnapshotStore.ts`: aliased imports (`createTauriSnapshot`, `listTauriSnapshots`, `getTauriSnapshot`) to avoid method-name shadowing with the store's own actions
+- `useAI-corrective.test.ts`: mock paths updated from `'../../services/aiService'` to `'@/lib/tauri-api'` using `importOriginal` pattern to preserve real `toApiError`/`toUserMessage` for the tests that use them as real implementations
+- Dynamic imports in test file (`explainNode`, `chat`) updated to `'@/lib/tauri-api'`
+- 5 service files remain on disk (B.13.3 deletes them); this commit is a no-op for behavior
+
+**Shadowing findings**: `useProject.ts` had `_openProjectByPath` and `_getGraph` with `_` prefix. After inspection, no local function or parameter shadowed `openProjectByPath` or `getGraph` — the `_` prefix was dropped safely. `scanProject` and `openProjectByPath` are now imported directly without aliasing.
+
+**Files changed**: 10 files, +35/−32 lines
+
+| `e51575f`  | B.13.2 | `refactor(frontend): migrate 9 hooks/stores from services/ to @/lib/tauri-api` |
+
+**B.13.3** (arch guard: delete 5 `src/services/*.ts` + update arch script) — PENDING
+
 ### B.14 PR-B-core verification — **DONE** (commit `6c9a553`, Batch 5 — verification only, no new commit)
 
 **Verification executed**: 2026-06-09 on branch `feat/pre-wave-2-pr-b-refactor`, HEAD `6c9a553`.
@@ -191,7 +243,9 @@ its consumers in the same commit.
 
 #### B.13 Status
 
-B.13 (frontend services deletion) is **deferred to PR-C**. Nine frontend files in `src/hooks/` and `src/stores/` still import from `services/`. These will be removed when PR-C lands.
+B.13.1 (rename test file) — **DONE** (commit `cb82991`)
+B.13.2 (import migration) — **DONE** (commit `e51575f`)
+B.13.3 (arch guard: delete 5 `src/services/*.ts` + update arch script) — PENDING
 
 #### Overall Verdict
 
