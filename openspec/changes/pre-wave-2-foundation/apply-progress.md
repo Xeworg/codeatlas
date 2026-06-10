@@ -61,10 +61,33 @@ shim refactor and legacy deletion are deferred to B.10/B.11.
 - **No shim refactor on `explain_node` / `chat`** — will land atomically
   with B.10/B.11.
 
-### B.5 AppState `Arc<dyn ScanRepository>` — **PENDING** (Batch 1)
-### B.6 AppState `Arc<dyn GraphRepository>` — **PENDING** (Batch 1)
-### B.7 AppState `Arc<dyn WorkspaceRepository>` + macro — **PENDING** (Batch 2, HIGH)
-### B.8 AppState `Arc<dyn AnalysisRepository>` — **PENDING** (Batch 1)
+### B.5 AppState `Arc<dyn ScanRepository>` — **DONE** (commit `bf980bc`, Batch 1)
+### B.6 AppState `Arc<dyn GraphRepository>` — **DONE** (commit `bf980bc`, Batch 1)
+### B.7 AppState `Arc<dyn WorkspaceRepository>` + macro — **DONE** (commit `6f8ee95`, Batch 2)
+### B.8 AppState `Arc<dyn AnalysisRepository>` — **DONE** (commit `bf980bc`, Batch 1)
+
+## Batch 1 complete (commit `bf980bc`)
+
+3 new `Arc<dyn>` fields (`scan_repo`, `graph_repo`, `analysis_repo`) wired
+on `AppState`; 11 commands rewritten to use `state.*_repo.clone()`. Solved
+the `Arc<dyn Trait>` impl gotcha (blanket `impl<T: Trait> Trait for Arc<T>`
+fails for `T = dyn Trait` due to `?Sized`) with explicit
+`impl Trait for Arc<dyn Trait>` impls for all 3 ports. +131 net lines.
+
+## Batch 2 complete (commit `6f8ee95`)
+
+`workspace_repo: Arc<dyn WorkspaceRepository>` added to `AppState` and
+wired in the composition root. The `workspace_service!` macro was
+rewritten to consume the trait-object port instead of constructing a
+fresh `WorkspaceRepositoryAdapter` from `&state.db` on every call. The
+macro signature stayed unchanged (`$state:expr`), so all 13 workspace
+commands required ZERO call-site changes. Only the unused
+`use engine::ports::WorkspaceRepositoryAdapter` import was removed.
++131 net lines.
+
+**Macro strategy chosen**: Option A (macro takes `$state` and extracts
+`state.workspace_repo.clone()` internally). This kept the diff small
+and avoided touching the 13 command bodies.
 ### B.9 Drop `pub db` + `pub ai_service` — **PENDING** (Batch 3)
 ### B.10 Move `explain_node` body to engine — **PENDING** (Batch 4)
 ### B.11 Move `chat` body to engine — **PENDING** (Batch 4)
