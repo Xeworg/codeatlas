@@ -51,6 +51,9 @@ impl engine::ports::ScanRepository for NoOpScanRepo {
     fn save_outline_items(&self, _file_id: &str, _items: &[OutlineItem]) -> engine::Result<()> {
         Ok(())
     }
+    fn get_outline_items(&self, _file_id: &str) -> engine::Result<Vec<OutlineItem>> {
+        Ok(vec![])
+    }
 }
 
 /// Mock AppStatePort for tests that don't need to verify state transitions.
