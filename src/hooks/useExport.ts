@@ -2,7 +2,7 @@
 // Part of PR-8 (Frontend services/hooks)
 
 import { useState, useCallback, useRef } from 'react'
-import { exportView } from '../services/analysisService'
+import { exportView } from '@/lib/tauri-api'
 import { t } from '../lib/i18n'
 import type { ExportPayload } from '../lib/types'
 

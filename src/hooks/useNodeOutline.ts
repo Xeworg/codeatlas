@@ -2,7 +2,7 @@
 // Part of PR-8 (Frontend services/hooks)
 
 import { useState, useEffect, useCallback } from 'react'
-import { getNodeOutline as _getNodeOutline } from '../services/graphService'
+import { getNodeOutline } from '@/lib/tauri-api'
 import type { OutlineItem } from '../lib/types'
 
 interface UseNodeOutlineResult {
@@ -37,7 +37,7 @@ export function useNodeOutline(nodeId: string | null): UseNodeOutlineResult {
     setLoading(true)
     setError(null)
 
-    _getNodeOutline(nodeId)
+    getNodeOutline(nodeId)
       .then((items) => {
         if (!cancelled) setOutline(items)
       })

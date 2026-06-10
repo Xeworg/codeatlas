@@ -4,7 +4,7 @@
 // Part of PR-8 (Frontend services/hooks)
 // ===========================================================================
 import { create } from 'zustand'
-import { createSnapshot, listSnapshots, getSnapshot } from '../services/snapshotService'
+import { createSnapshot as createTauriSnapshot, listSnapshots as listTauriSnapshots, getSnapshot as getTauriSnapshot } from '@/lib/tauri-api'
 import type { Snapshot, SnapshotPayload } from '../lib/types-v3'
 
 interface SnapshotState {
@@ -30,7 +30,7 @@ export const useSnapshotStore = create<SnapshotState>((set, get) => ({
   createSnapshot: async (projectId: string, label: string, workspaceId?: string) => {
     set({ isLoading: true, error: null })
     try {
-      const snap = await createSnapshot(projectId, label, workspaceId)
+      const snap = await createTauriSnapshot(projectId, label, workspaceId)
       const current = get().snapshots
       set({ snapshots: [snap, ...current], isLoading: false })
     } catch (e) {
@@ -41,7 +41,7 @@ export const useSnapshotStore = create<SnapshotState>((set, get) => ({
   listSnapshots: async (projectId: string, workspaceId?: string) => {
     set({ isLoading: true, error: null })
     try {
-      const snaps = await listSnapshots(projectId, workspaceId)
+      const snaps = await listTauriSnapshots(projectId, workspaceId)
       set({ snapshots: snaps, isLoading: false })
     } catch (e) {
       set({ error: String(e), isLoading: false })
@@ -51,7 +51,7 @@ export const useSnapshotStore = create<SnapshotState>((set, get) => ({
   loadSnapshot: async (snapshotId: string) => {
     set({ isLoading: true, error: null })
     try {
-      const snap = await getSnapshot(snapshotId)
+      const snap = await getTauriSnapshot(snapshotId)
       if (!snap) {
         set({ error: 'Snapshot not found', isLoading: false })
         return null

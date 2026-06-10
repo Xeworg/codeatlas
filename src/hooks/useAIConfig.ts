@@ -2,7 +2,7 @@
 // Part of PR-8 (Frontend services/hooks)
 
 import { useState, useCallback } from 'react'
-import { configureAI as _configureAI, getAIConfig as _getAIConfig } from '../services/aiService'
+import { configureAI, getAIConfig } from '@/lib/tauri-api'
 import type { AIConfig } from '../lib/types'
 
 interface UseAIConfigResult {
@@ -27,7 +27,7 @@ export function useAIConfig(): UseAIConfigResult {
     setLoading(true)
     setError(null)
     try {
-      const result = await _getAIConfig()
+      const result = await getAIConfig()
       setConfig(result)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load AI config')
@@ -40,7 +40,7 @@ export function useAIConfig(): UseAIConfigResult {
     setSaving(true)
     setError(null)
     try {
-      await _configureAI(cfg)
+      await configureAI(cfg)
       setConfig({ provider: cfg.provider, model: cfg.model, endpoint: cfg.endpoint })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save AI config')

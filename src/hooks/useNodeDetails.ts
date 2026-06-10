@@ -2,7 +2,7 @@
 // Part of PR-8 (Frontend services/hooks)
 
 import { useState, useEffect, useCallback } from 'react'
-import { getNodeDetails as _getNodeDetails } from '../services/graphService'
+import { getNodeDetails } from '@/lib/tauri-api'
 import type { FileInfo } from '../lib/types'
 
 interface UseNodeDetailsResult {
@@ -37,7 +37,7 @@ export function useNodeDetails(nodeId: string | null): UseNodeDetailsResult {
     setLoading(true)
     setError(null)
 
-    _getNodeDetails(nodeId)
+    getNodeDetails(nodeId)
       .then((data) => {
         if (!cancelled) setDetails(data)
       })

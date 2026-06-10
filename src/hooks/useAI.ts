@@ -4,7 +4,7 @@
 import { useState, useCallback, useRef } from 'react'
 import type { NodeExplanation, ChatResponse } from '../lib/types'
 import { toApiError, toUserMessage } from '../lib/tauri-api'
-import { explainNode, chat } from '../services/aiService'
+import { explainNode, chat } from '@/lib/tauri-api'
 
 interface AIState {
   explanation: {

@@ -4,9 +4,9 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  getArchitectureDetection as _getArchitectureDetection,
-  getImpactAnalysis as _getImpactAnalysis,
-} from '../services/projectService'
+  getArchitectureDetection,
+  getImpactAnalysis,
+} from '@/lib/tauri-api'
 import type { ArchitectureDetectionResult, ImpactAnalysisResult } from '../lib/types'
 import { useProjectStore } from '../stores/projectStore'
 import { useGraphStore } from '../stores/graphStore'
@@ -34,7 +34,7 @@ export function useArchitecture(): UseArchitectureReturn {
   const fetchArchitecture = useCallback(async (pid: string) => {
     setArchitectureDetection(null)
     try {
-      const result = await _getArchitectureDetection(pid)
+      const result = await getArchitectureDetection(pid)
       setArchitectureDetection(result)
     } catch {
       setArchitectureDetection(null)
@@ -45,7 +45,7 @@ export function useArchitecture(): UseArchitectureReturn {
   const fetchImpact = useCallback(async (pid: string, nid: string) => {
     setImpactAnalysis(null)
     try {
-      const result = await _getImpactAnalysis(pid, nid)
+      const result = await getImpactAnalysis(pid, nid)
       setImpactAnalysis(result)
     } catch {
       setImpactAnalysis(null)
