@@ -15,6 +15,11 @@ pub mod services;
 
 pub use db::queries::{C4View, ExecutiveSummary, SnapshotDiff};
 pub use models::{FileInfo, GraphData, NodeType, ScanResult, ScanStatus};
+pub use ports::hexagonal::{
+    Clock, SystemClock, MockClock,
+    IdGenerator, RandomIdGen, MockIdGen,
+    Stopwatch, SystemStopwatch, MockStopwatch, StopwatchHandle,
+};
 pub use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, AppError>;
