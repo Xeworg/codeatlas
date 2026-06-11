@@ -65,6 +65,36 @@ impl<G, S, A> GraphService<G, S, A> {
 }
 
 impl<G: GraphRepository, S: ScanRepository, A: AppStatePort> GraphService<G, S, A> {
+    /// Get all nodes that the given node depends on (outgoing import edges).
+    ///
+    /// Returns `Err(AppError::NotFound)` if the node does not exist.
+    /// Returns `Ok(vec![])` for known nodes with no dependencies.
+    pub async fn get_dependencies(&self, node_id: &str) -> Result<Vec<crate::models::NodeRef>> {
+        let deps = self.graph_repo.get_dependencies(node_id)?;
+        // If deps is empty, verify the node exists (not-found vs empty-result)
+        if deps.is_empty() {
+            if self.scan_repo.get_file_by_id(node_id)?.is_none() {
+                return Err(AppError::NotFound(node_id.to_string()));
+            }
+        }
+        Ok(deps)
+    }
+
+    /// Get all nodes that depend on the given node (incoming import edges).
+    ///
+    /// Returns `Err(AppError::NotFound)` if the node does not exist.
+    /// Returns `Ok(vec![])` for known nodes with no dependents.
+    pub async fn get_dependents(&self, node_id: &str) -> Result<Vec<crate::models::NodeRef>> {
+        let deps = self.graph_repo.get_dependents(node_id)?;
+        // If deps is empty, verify the node exists (not-found vs empty-result)
+        if deps.is_empty() {
+            if self.scan_repo.get_file_by_id(node_id)?.is_none() {
+                return Err(AppError::NotFound(node_id.to_string()));
+            }
+        }
+        Ok(deps)
+    }
+
     /// Get the dependency graph for a project.
     ///
     /// 1. Transitions `AppStatePort` to `BuildingGraph`
