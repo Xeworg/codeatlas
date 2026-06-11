@@ -44,14 +44,6 @@ impl Clock for SystemClock {
 
 /// Mock-clock adapter — returns a fixed `DateTime<Utc>` until `set` is called.
 ///
-/// # Example
-/// ```
-/// use engine::ports::hexagonal::{Clock, MockClock};
-/// let clock = MockClock::new(chrono::Utc::now());
-/// assert_eq!(clock.now(), clock.now()); // deterministic
-/// ```
-/// Mock-clock adapter — returns a fixed `DateTime<Utc>` until `set` is called.
-///
 /// Uses `Mutex<DateTime<Utc>>` for interior mutability so the `set` method
 /// works on `&self` and the struct satisfies `Send + Sync`.
 ///
@@ -121,28 +113,12 @@ impl IdGenerator for RandomIdGen {
 
 /// Mock-ID adapter — returns counter-based UUIDs for deterministic tests.
 ///
-/// - Call 0: returns `Uuid::nil()` (zero UUID)
-/// - Call N (N ≥ 1): returns a v4-shaped UUID whose bytes 8–15 are
-///   `(base_node_id | (N - 1))` — the counter is embedded in the node field
-///   so consecutive calls produce values that differ predictably.
-///
-/// # Example
-/// ```
-/// use engine::ports::hexagonal::{IdGenerator, MockIdGen};
-/// let id_gen = MockIdGen::new();
-/// let id0 = id_gen.next_id(); // Uuid::nil()
-/// let id1 = id_gen.next_id(); // different from id0
-/// let id2 = id_gen.next_id(); // different from id1
-/// assert_ne!(id1, id2);
-/// ```
-/// Mock-ID adapter — returns counter-based UUIDs for deterministic tests.
-///
 /// Uses `AtomicU64` for interior mutability so the struct satisfies `Send + Sync`.
 ///
 /// - Call 0: returns `Uuid::nil()` (zero UUID)
-/// - Call N (N ≥ 1): returns a v4-shaped UUID whose bytes 8–15 are
-///   `(base_node_id | (N - 1))` — the counter is embedded in the node field
-///   so consecutive calls produce values that differ predictably.
+/// - Call N (N ≥ 1): returns `Uuid::from_u64_pair(N, 0)` — a UUID whose
+///   most-significant 8 bytes are the counter `N` and whose least-significant
+///   8 bytes are zero. Consecutive calls produce values that differ predictably.
 ///
 /// # Example
 /// ```
@@ -213,17 +189,23 @@ impl IdGenerator for MockIdGen {
 /// Opaque handle returned by [`Stopwatch::start`].
 ///
 /// System adapter stores `std::time::Instant`; mock adapter stores a `u64` index.
+/// The handle is constructible only inside the engine crate; external consumers
+/// receive opaque handles from stopwatch adapters and must use them through the
+/// `Stopwatch` trait.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StopwatchHandle(std::time::Instant);
 
 impl StopwatchHandle {
-    /// Wrap an `Instant` (used by [`SystemStopwatch`]).
-    pub fn from_instant(i: std::time::Instant) -> Self {
+    /// Wrap an `Instant` (used by [`SystemStopwatch`]). Crate-internal: the
+    /// handle is opaque to consumers; only stopwatch adapters may construct one.
+    pub(crate) fn from_instant(i: std::time::Instant) -> Self {
         Self(i)
     }
 
     /// Returns the inner instant (used only by [`SystemStopwatch`]).
-    pub fn as_instant(&self) -> std::time::Instant {
+    /// Crate-internal: the handle is opaque to consumers; only stopwatch
+    /// adapters may unwrap the inner `Instant`.
+    pub(crate) fn as_instant(&self) -> std::time::Instant {
         self.0
     }
 }
@@ -258,18 +240,6 @@ impl Stopwatch for SystemStopwatch {
     }
 }
 
-/// Mock-stopwatch adapter — returns a fixed elapsed value until `set_elapsed_ms` is called.
-///
-/// All handles share the same internal elapsed value (set via `set_elapsed_ms`).
-/// This makes it trivial to write deterministic tests:
-///
-/// ```
-/// use engine::ports::hexagonal::{Stopwatch, MockStopwatch};
-/// let sw = MockStopwatch::new();
-/// let h = sw.start();
-/// sw.set_elapsed_ms(42);
-/// assert_eq!(sw.elapsed_ms(&h), 42);
-/// ```
 /// Mock-stopwatch adapter — returns a fixed elapsed value until `set_elapsed_ms` is called.
 ///
 /// Uses `AtomicU64` for interior mutability so the struct satisfies `Send + Sync`.
