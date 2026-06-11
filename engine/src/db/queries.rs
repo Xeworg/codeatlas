@@ -241,6 +241,35 @@ impl<'pool> ProjectRepository<'pool> {
         })
     }
 
+    /// Get the current scan status for a project by project ID.
+    pub fn get_scan_status(&self, project_id: &str) -> SqliteResult<Option<crate::models::ScanStatus>> {
+        self.pool.with_connection(|conn| {
+            let mut stmt = conn.prepare("SELECT status FROM projects WHERE id = ?1")?;
+            let status_str: Option<String> = stmt
+                .query_row(params![project_id], |row| row.get(0))
+                .optional()?;
+            Ok(status_str.map(|s| match s.as_str() {
+                "scanning" => crate::models::ScanStatus::Scanning,
+                "building_graph" => crate::models::ScanStatus::BuildingGraph,
+                "ready" => crate::models::ScanStatus::Ready,
+                "error" => crate::models::ScanStatus::Error,
+                "cancelled" => crate::models::ScanStatus::Cancelled,
+                _ => crate::models::ScanStatus::Idle,
+            }))
+        })
+    }
+
+    /// Mark a project's scan as cancelled. Does nothing if project doesn't exist.
+    pub fn mark_scan_cancelled(&self, project_id: &str) -> SqliteResult<()> {
+        self.pool.with_connection(|conn| {
+            conn.execute(
+                "UPDATE projects SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?1",
+                params![project_id],
+            )?;
+            Ok(())
+        })
+    }
+
     /// Hydrate symbols from DB for a given file ID.
     fn get_symbols_for_file(
         &self,
@@ -353,6 +382,60 @@ impl<'pool> ProjectRepository<'pool> {
                 ],
             )?;
             Ok(())
+        })
+    }
+
+    /// Get all nodes that the given node depends on (outgoing import edges).
+    /// Returns nodes that the given node imports.
+    pub fn get_node_outgoing_edges(&self, node_id: &str) -> SqliteResult<Vec<crate::models::NodeRef>> {
+        self.pool.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT f.id, f.path, i.target_module, i.import_names
+                 FROM imports i
+                 JOIN files f ON f.id = i.target_file_id
+                 WHERE i.source_file_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![node_id], |row| {
+                let id: String = row.get(0)?;
+                let path: String = row.get(1)?;
+                let target_module: Option<String> = row.get(2)?;
+                let import_names_json: String = row.get(3)?;
+                let imports: Vec<String> = serde_json::from_str(&import_names_json).unwrap_or_default();
+                Ok(crate::models::NodeRef::new(
+                    id,
+                    path,
+                    target_module.unwrap_or_default(),
+                    imports,
+                ))
+            })?;
+            rows.collect()
+        })
+    }
+
+    /// Get all nodes that depend on the given node (incoming import edges).
+    /// Returns nodes that import the given node.
+    pub fn get_node_incoming_edges(&self, node_id: &str) -> SqliteResult<Vec<crate::models::NodeRef>> {
+        self.pool.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT f.id, f.path, i.target_module, i.import_names
+                 FROM imports i
+                 JOIN files f ON f.id = i.source_file_id
+                 WHERE i.target_file_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![node_id], |row| {
+                let id: String = row.get(0)?;
+                let path: String = row.get(1)?;
+                let target_module: Option<String> = row.get(2)?;
+                let import_names_json: String = row.get(3)?;
+                let imports: Vec<String> = serde_json::from_str(&import_names_json).unwrap_or_default();
+                Ok(crate::models::NodeRef::new(
+                    id,
+                    path,
+                    target_module.unwrap_or_default(),
+                    imports,
+                ))
+            })?;
+            rows.collect()
         })
     }
 

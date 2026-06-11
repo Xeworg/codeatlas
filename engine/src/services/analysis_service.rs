@@ -9,7 +9,7 @@
 //! ```text
 //! Tauri command shim
 //!   -> AnalysisService
-//!     -> AnalysisRepository  (persistence + pool accessor)
+//!     -> AnalysisDataSource  (persistence + pool accessor)
 //!     -> GraphRepository      (graph cache)
 //!     -> engine::analysis::*  (pure computation)
 //! ```
@@ -20,7 +20,7 @@ use crate::analysis::{
     ArchitectureDetectionResult as EngineArchResult, ImpactAnalysisResult as EngineImpactResult,
     InsightsConfig,
 };
-use crate::ports::{AnalysisRepository, GraphRepository};
+use crate::ports::{AnalysisDataSource, GraphRepository};
 use crate::Result;
 use serde::Serialize;
 
@@ -149,7 +149,7 @@ pub struct ExportMetadata {
 
 /// Application service for advanced analysis and export operations.
 ///
-/// Generic over `A: AnalysisRepository` and `G: GraphRepository` so that
+/// Generic over `A: AnalysisDataSource` and `G: GraphRepository` so that
 /// all operations are fully testable with mock doubles.
 ///
 /// # Methods
@@ -165,7 +165,7 @@ pub struct AnalysisService<'pool, A, G> {
 
 impl<'pool, A, G> AnalysisService<'pool, A, G>
 where
-    A: AnalysisRepository,
+    A: AnalysisDataSource,
     G: GraphRepository,
 {
     /// Construct a new `AnalysisService` with the given repositories.
@@ -180,7 +180,7 @@ where
     /// Detect the architectural pattern for a project based on file paths.
     ///
     /// Runs `engine::analysis::detect_architecture` and persists the result
-    /// via `AnalysisRepository::save_architecture_detection`.
+    /// via `AnalysisDataSource::save_architecture_detection`.
     pub fn get_architecture_detection(
         &self,
         project_id: &str,
@@ -248,7 +248,7 @@ where
 
     /// Compute graph insights: cycles, hotspots, coupling, and density.
     ///
-    /// Persists the result via `AnalysisRepository::save_graph_insights`.
+    /// Persists the result via `AnalysisDataSource::save_graph_insights`.
     pub fn get_graph_insights(&self, project_id: &str) -> Result<GraphInsightsResponse> {
         let timing_start = std::time::Instant::now();
 
@@ -316,7 +316,7 @@ where
                 .unwrap_or_default()
             });
 
-        // Optionally fetch cached insights via AnalysisRepository
+        // Optionally fetch cached insights via AnalysisDataSource
         let insights_json: Option<serde_json::Value> = self
             .analysis_repo
             .get_cached_graph_insights(project_id)?

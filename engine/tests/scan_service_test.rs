@@ -209,6 +209,12 @@ fn scan_project_propagates_save_error() {
         fn get_outline_items(&self, _file_id: &str) -> engine::Result<Vec<OutlineItem>> {
             Ok(vec![])
         }
+        fn get_scan_status(&self, _project_id: &str) -> engine::Result<Option<ScanStatus>> {
+            Ok(None)
+        }
+        fn cancel(&self, _project_id: &str) -> engine::Result<()> {
+            Ok(())
+        }
     }
 
     let app_state = engine::ports::AppStatePortAdapter::new(

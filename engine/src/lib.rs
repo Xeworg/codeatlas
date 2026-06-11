@@ -27,6 +27,9 @@ pub enum AppError {
     #[error("File not found: {0}")]
     FileNotFound(String),
 
+    #[error("Scan not found: {0}")]
+    NotFound(String),
+
     #[error("Scan timeout: processed {files_processed}/{total_files} files")]
     ScanTimeout {
         files_processed: usize,
@@ -94,6 +97,11 @@ impl serde::Serialize for AppError {
                 code: "FILE_NOT_FOUND",
                 message: format!("File not found: {}", path),
                 details: Some(serde_json::json!({ "path": path })),
+            },
+            AppError::NotFound(id) => IpcErrorPayload {
+                code: "NOT_FOUND",
+                message: format!("Scan not found: {}", id),
+                details: Some(serde_json::json!({ "id": id })),
             },
             AppError::ScanTimeout {
                 files_processed,

@@ -55,6 +55,18 @@ jobs:
       - name: Tests
         run: cd engine && cargo test
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Architecture guard
+        run: npm run check:arch
+
   frontend-tests:
     name: Frontend Tests
     runs-on: ubuntu-latest

@@ -4,9 +4,11 @@
 mod ai;
 mod file;
 mod graph;
+mod node_ref;
 mod project;
 
 pub use ai::*;
 pub use file::*;
 pub use graph::*;
+pub use node_ref::*;
 pub use project::*;

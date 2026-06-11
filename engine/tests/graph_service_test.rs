@@ -54,6 +54,12 @@ impl engine::ports::ScanRepository for NoOpScanRepo {
     fn get_outline_items(&self, _file_id: &str) -> engine::Result<Vec<OutlineItem>> {
         Ok(vec![])
     }
+    fn get_scan_status(&self, _project_id: &str) -> engine::Result<Option<ScanStatus>> {
+        Ok(None)
+    }
+    fn cancel(&self, _project_id: &str) -> engine::Result<()> {
+        Ok(())
+    }
 }
 
 /// Mock AppStatePort for tests that don't need to verify state transitions.
@@ -146,6 +152,12 @@ impl engine::ports::GraphRepository for RecordingGraphRepo {
             .unwrap()
             .push(file_id.to_string());
         Ok(self.outline_items.lock().unwrap().clone())
+    }
+    fn get_dependencies(&self, _node_id: &str) -> engine::Result<Vec<engine::models::NodeRef>> {
+        Ok(vec![])
+    }
+    fn get_dependents(&self, _node_id: &str) -> engine::Result<Vec<engine::models::NodeRef>> {
+        Ok(vec![])
     }
 }
 
