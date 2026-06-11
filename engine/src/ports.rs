@@ -1121,3 +1121,18 @@ mod from_arc_tests {
         let _adapter = AnalysisDataSourceAdapter::new(&pool);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hexagonal ports — Clock, IdGenerator, Stopwatch (wave 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub mod hexagonal;
+
+// Re-export the three port traits and their adapters at the ports module level
+// so callers can use `engine::ports::{Clock, IdGenerator, Stopwatch}` without
+// knowing the inner module name.
+pub use hexagonal::{
+    Clock, SystemClock, MockClock,
+    IdGenerator, RandomIdGen, MockIdGen,
+    Stopwatch, SystemStopwatch, MockStopwatch, StopwatchHandle,
+};
