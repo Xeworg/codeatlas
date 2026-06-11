@@ -144,6 +144,23 @@ pub async fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusRes
     })
 }
 
+/// Cancel an in-progress scan.
+///
+/// Thin shim: constructs `ScanService` from `AppState` fields and delegates to
+/// `ScanService::cancel`. Three outcomes: running scan → cancelled, completed
+/// scan → no-op, unknown scan → NotFound error.
+#[tauri::command]
+pub async fn cancel_scan(scan_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let scan_repo = state.scan_repo.clone();
+    let app_state_adapter = AppStatePortAdapter::from_arc_refs(
+        &state.scan_status,
+        &state.ai_config,
+        &state.project_root,
+    );
+    let service = ScanService::new(scan_repo, app_state_adapter);
+    service.cancel(&scan_id).await.map_err(to_ipc_error)
+}
+
 // MARK: Graph Commands
 // Thin shims — all orchestration delegated to GraphService (engine::services::GraphService).
 // Cache management, graph building, outline parsing, and state transitions are owned by the service.
@@ -233,6 +250,44 @@ pub fn search_nodes(
     service
         .search_nodes(&project_id, &query, limit)
         .map_err(to_ipc_error)
+}
+
+/// Get all nodes that the given node depends on (outgoing import edges).
+///
+/// Thin shim: delegates to `GraphService::get_dependencies`.
+#[tauri::command]
+pub async fn get_dependencies(
+    node_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<engine::models::NodeRef>, String> {
+    let graph_repo = state.graph_repo.clone();
+    let scan_repo = state.scan_repo.clone();
+    let app_state_adapter = AppStatePortAdapter::from_arc_refs(
+        &state.scan_status,
+        &state.ai_config,
+        &state.project_root,
+    );
+    let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
+    service.get_dependencies(&node_id).await.map_err(to_ipc_error)
+}
+
+/// Get all nodes that depend on the given node (incoming import edges).
+///
+/// Thin shim: delegates to `GraphService::get_dependents`.
+#[tauri::command]
+pub async fn get_dependents(
+    node_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<engine::models::NodeRef>, String> {
+    let graph_repo = state.graph_repo.clone();
+    let scan_repo = state.scan_repo.clone();
+    let app_state_adapter = AppStatePortAdapter::from_arc_refs(
+        &state.scan_status,
+        &state.ai_config,
+        &state.project_root,
+    );
+    let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
+    service.get_dependents(&node_id).await.map_err(to_ipc_error)
 }
 
 // MARK: AI Commands
