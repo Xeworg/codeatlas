@@ -21,7 +21,7 @@
 //! - [`AppStatePortAdapter`] — implements `AppStatePort` via in-memory `Mutex<...>` fields
 
 use crate::db::DbPool;
-use crate::models::{FileInfo, ImportInfo, OutlineItem, ProjectMeta, ScanResult};
+use crate::models::{FileInfo, ImportInfo, OutlineItem, ProjectMeta, ScanResult, ScanStatus};
 use crate::Result;
 use std::sync::{Arc, Mutex};
 
@@ -62,6 +62,14 @@ pub trait ScanRepository: Send + Sync {
 
     /// Retrieve outline items for a file.
     fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>>;
+
+    /// Get the current scan status for a project (by root path or project id).
+    fn get_scan_status(&self, project_id: &str) -> Result<Option<ScanStatus>>;
+
+    /// Cancel an in-progress scan for a project. Sets status to `Cancelled`.
+    /// Returns `Ok(())` if the scan was found and cancelled (or was already completed).
+    /// Returns `Err(AppError::NotFound)` if no scan exists for this project.
+    fn cancel(&self, project_id: &str) -> Result<()>;
 }
 
 /// Adapter that implements `ScanRepository` by delegating to `ProjectRepository`.
@@ -161,6 +169,18 @@ impl ScanRepository for ScanRepositoryAdapter {
             .get_outline_items(file_id)
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
+
+    fn get_scan_status(&self, project_id: &str) -> Result<Option<ScanStatus>> {
+        self.inner
+            .get_scan_status(project_id)
+            .map_err(|e| crate::AppError::Database(e.to_string()))
+    }
+
+    fn cancel(&self, project_id: &str) -> Result<()> {
+        self.inner
+            .mark_scan_cancelled(project_id)
+            .map_err(|e| crate::AppError::Database(e.to_string()))
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -190,6 +210,16 @@ pub trait GraphRepository: Send + Sync {
 
     /// Get outline items for a file.
     fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>>;
+
+    /// Get all nodes that the given node depends on (outgoing import edges).
+    /// Returns empty Vec for known nodes with no dependencies.
+    /// Returns `Err(AppError::NotFound)` for unknown nodes.
+    fn get_dependencies(&self, node_id: &str) -> Result<Vec<crate::models::NodeRef>>;
+
+    /// Get all nodes that depend on the given node (incoming import edges).
+    /// Returns empty Vec for known nodes with no dependents.
+    /// Returns `Err(AppError::NotFound)` for unknown nodes.
+    fn get_dependents(&self, node_id: &str) -> Result<Vec<crate::models::NodeRef>>;
 }
 
 /// Adapter that implements `GraphRepository` by delegating to `ProjectRepository`.
@@ -254,6 +284,18 @@ impl GraphRepository for GraphRepositoryAdapter {
     fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>> {
         self.inner
             .get_outline_items(file_id)
+            .map_err(|e| crate::AppError::Database(e.to_string()))
+    }
+
+    fn get_dependencies(&self, node_id: &str) -> Result<Vec<crate::models::NodeRef>> {
+        self.inner
+            .get_node_outgoing_edges(node_id)
+            .map_err(|e| crate::AppError::Database(e.to_string()))
+    }
+
+    fn get_dependents(&self, node_id: &str) -> Result<Vec<crate::models::NodeRef>> {
+        self.inner
+            .get_node_incoming_edges(node_id)
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 }
@@ -821,6 +863,12 @@ impl ScanRepository for std::sync::Arc<dyn ScanRepository> {
     fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>> {
         (**self).get_outline_items(file_id)
     }
+    fn get_scan_status(&self, project_id: &str) -> Result<Option<ScanStatus>> {
+        (**self).get_scan_status(project_id)
+    }
+    fn cancel(&self, project_id: &str) -> Result<()> {
+        (**self).cancel(project_id)
+    }
 }
 
 impl GraphRepository for std::sync::Arc<dyn GraphRepository> {
@@ -841,6 +889,12 @@ impl GraphRepository for std::sync::Arc<dyn GraphRepository> {
     }
     fn get_outline_items(&self, file_id: &str) -> Result<Vec<OutlineItem>> {
         (**self).get_outline_items(file_id)
+    }
+    fn get_dependencies(&self, node_id: &str) -> Result<Vec<crate::models::NodeRef>> {
+        (**self).get_dependencies(node_id)
+    }
+    fn get_dependents(&self, node_id: &str) -> Result<Vec<crate::models::NodeRef>> {
+        (**self).get_dependents(node_id)
     }
 }
 

@@ -25,7 +25,7 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 thiserror = "1.0"
 
 # Async runtime
-tokio = { version = "1.43", features = ["rt-multi-thread"] }
+tokio = { version = "1.43", features = ["rt-multi-thread", "macros"] }
 
 # Object-safe async trait support (required for `Arc<dyn AIServicePort>`).
 async-trait = "0.1"

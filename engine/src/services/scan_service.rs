@@ -76,6 +76,28 @@ impl<S, A> ScanService<S, A> {
 }
 
 impl<S: ScanRepository, A: AppStatePort> ScanService<S, A> {
+    /// Cancel an in-progress scan.
+    ///
+    /// Three outcomes:
+    /// - Running scan (Scanning | BuildingGraph) → cancelled, returns `Ok(())`
+    /// - Completed/terminal scan (Ready | Idle | Cancelled | Error) → no-op, returns `Ok(())`
+    /// - Unknown scan → `Err(AppError::NotFound(scan_id))`
+    pub async fn cancel(&self, scan_id: &str) -> Result<()> {
+        let status = self.scan_repo.get_scan_status(scan_id)?;
+        match status {
+            None => Err(AppError::NotFound(scan_id.to_string())),
+            Some(ScanStatus::Idle | ScanStatus::Ready | ScanStatus::Cancelled | ScanStatus::Error) => {
+                // Non-cancellable state — no-op
+                Ok(())
+            }
+            Some(ScanStatus::Scanning | ScanStatus::BuildingGraph) => {
+                // Running — cancel it
+                self.scan_repo.cancel(scan_id)?;
+                Ok(())
+            }
+        }
+    }
+
     /// Scan a project directory: discover files, parse, resolve imports, persist.
     ///
     /// Orchestrates the full scan lifecycle:
@@ -370,6 +392,12 @@ mod tests {
             unreachable!()
         }
         fn get_outline_items(&self, _file_id: &str) -> Result<Vec<OutlineItem>> {
+            unreachable!()
+        }
+        fn get_scan_status(&self, _project_id: &str) -> Result<Option<ScanStatus>> {
+            unreachable!()
+        }
+        fn cancel(&self, _project_id: &str) -> Result<()> {
             unreachable!()
         }
     }
