@@ -3,6 +3,9 @@
 //! Orchestrates the scan lifecycle using canonical ports:
 //! - [`ScanRepository`] — persists scan results, files, imports, and outlines
 //! - [`AppStatePort`] — tracks scan status and project root in-memory
+//! - [`Clock`] — injectable wall-clock time (UTC DateTime)
+//! - [`IdGenerator`] — injectable UUID generation
+//! - [`Stopwatch`] — injectable elapsed-time measurement
 //!
 //! The service owns the infrastructure for file discovery, parsing, and import
 //! resolution. It does NOT instantiate concrete repositories or database pools;
@@ -38,6 +41,7 @@
 use crate::commands::{scan_files, ScanFilesOutput};
 use crate::graph::PathResolver;
 use crate::models::{ImportInfo, ScanResult, ScanStatus};
+use crate::ports::hexagonal::{Clock, IdGenerator, Stopwatch};
 use crate::ports::{AppStatePort, ScanRepository};
 use crate::scanner::parser::ParserRegistry;
 use crate::scanner::FileWalker;
@@ -47,20 +51,25 @@ use std::collections::HashMap;
 
 /// Application service for scan orchestration.
 ///
-/// Generic over `S: ScanRepository` and `A: AppStatePort` so tests can inject
-/// doubles without touching the database.
-pub struct ScanService<S, A> {
+/// Generic over `S: ScanRepository`, `A: AppStatePort`, `C: Clock`, `I: IdGenerator`,
+/// and `W: Stopwatch` so tests can inject mock doubles without touching the database
+/// or calling real system time/ID functions.
+pub struct ScanService<S, A, C, I, W> {
     scan_repo: S,
     state: A,
+    clock: C,
+    id_gen: I,
+    stopwatch: W,
 }
 
-impl<S, A> ScanService<S, A> {
+impl<S, A, C, I, W> ScanService<S, A, C, I, W> {
     /// Construct a new ScanService.
     ///
-    /// `scan_repo` and `state` are injected from the composition root.
-    /// They are kept separate so this service is fully testable with mocks.
-    pub fn new(scan_repo: S, state: A) -> Self {
-        Self { scan_repo, state }
+    /// `scan_repo`, `state`, `clock`, `id_gen`, and `stopwatch` are all injected
+    /// from the composition root. They are kept separate so this service is fully
+    /// testable with mock doubles.
+    pub fn new(scan_repo: S, state: A, clock: C, id_gen: I, stopwatch: W) -> Self {
+        Self { scan_repo, state, clock, id_gen, stopwatch }
     }
 
     /// Access the state port (read-only view for testing).
@@ -75,7 +84,7 @@ impl<S, A> ScanService<S, A> {
     }
 }
 
-impl<S: ScanRepository, A: AppStatePort> ScanService<S, A> {
+impl<S: ScanRepository, A: AppStatePort, C: Clock, I: IdGenerator, W: Stopwatch> ScanService<S, A, C, I, W> {
     /// Cancel an in-progress scan.
     ///
     /// Three outcomes:
@@ -116,15 +125,17 @@ impl<S: ScanRepository, A: AppStatePort> ScanService<S, A> {
     /// on other persistence failures. Propagates parsing/discovery errors.
     pub fn scan_project(&self, path: &str) -> Result<ScanResult> {
         let root_for_state = path.to_string();
+        let scan_started_at = self.clock.now();
+        tracing::debug!(path = %path, scan_started_at = %scan_started_at, "scan project started");
 
         // Phase 0: Transition to Scanning
         self.state.set_scan_status(ScanStatus::Scanning)?;
 
-        // Phase 1: Discover files (with timing)
+        // Phase 1: Discover files (with timing via injected stopwatch)
         let walker = FileWalker::new(path);
-        let discover_start = std::time::Instant::now();
+        let discover_handle = self.stopwatch.start();
         let discovered = walker.discover();
-        let discover_ms = discover_start.elapsed().as_millis() as u64;
+        let discover_ms = self.stopwatch.elapsed_ms(&discover_handle);
 
         // Phase 2: Parse all files (single dispatch — registry called exactly once per file)
         let registry = ParserRegistry::new();
@@ -174,7 +185,7 @@ impl<S: ScanRepository, A: AppStatePort> ScanService<S, A> {
         // Build the initial scan result
         let symbols_count: usize = file_infos.iter().map(|f| f.symbols.len()).sum();
         let mut result = ScanResult {
-            project_id: uuid::Uuid::new_v4().to_string(),
+            project_id: self.id_gen.next_id().to_string(),
             project_name: path.split('/').next_back().unwrap_or("Project").to_string(),
             root_path: path.to_string(),
             files_count: file_infos.len(),
@@ -414,8 +425,11 @@ mod tests {
             Mutex::new(None),
             Mutex::new(String::new()),
         );
+        let clock = crate::ports::hexagonal::MockClock::new(chrono::Utc::now());
+        let id_gen = crate::ports::hexagonal::MockIdGen::new();
+        let stopwatch = crate::ports::hexagonal::MockStopwatch::with_elapsed_ms(0);
 
-        let service = ScanService::new(scan_repo, app_state);
+        let service = ScanService::new(scan_repo, app_state, clock, id_gen, stopwatch);
 
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::write(tmp.path().join("index.ts"), "export const x = 1;").ok();
@@ -426,6 +440,8 @@ mod tests {
         let r = result.unwrap();
         assert_eq!(r.status, ScanStatus::Ready);
         assert_eq!(r.files_count, 1);
+        assert_eq!(r.project_id, uuid::Uuid::nil().to_string());
+        assert_eq!(r.scan_duration_ms, 0);
 
         // Verify final status
         let final_status = service.state().get_scan_status().unwrap();
@@ -444,8 +460,11 @@ mod tests {
             Mutex::new(None),
             Mutex::new(String::new()),
         );
+        let clock = crate::ports::hexagonal::MockClock::new(chrono::Utc::now());
+        let id_gen = crate::ports::hexagonal::MockIdGen::new();
+        let stopwatch = crate::ports::hexagonal::MockStopwatch::with_elapsed_ms(0);
 
-        let service = ScanService::new(scan_repo, app_state);
+        let service = ScanService::new(scan_repo, app_state, clock, id_gen, stopwatch);
 
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::write(tmp.path().join("main.ts"), "const x = 1;").ok();
@@ -468,8 +487,11 @@ mod tests {
             Mutex::new(None),
             Mutex::new(String::new()),
         );
+        let clock = crate::ports::hexagonal::MockClock::new(chrono::Utc::now());
+        let id_gen = crate::ports::hexagonal::MockIdGen::new();
+        let stopwatch = crate::ports::hexagonal::MockStopwatch::with_elapsed_ms(0);
 
-        let service = ScanService::new(scan_repo, app_state);
+        let service = ScanService::new(scan_repo, app_state, clock, id_gen, stopwatch);
 
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::write(tmp.path().join("test.ts"), "export const y = 2;").ok();
@@ -502,8 +524,11 @@ mod tests {
             Mutex::new(None),
             Mutex::new(String::new()),
         );
+        let clock = crate::ports::hexagonal::MockClock::new(chrono::Utc::now());
+        let id_gen = crate::ports::hexagonal::MockIdGen::new();
+        let stopwatch = crate::ports::hexagonal::MockStopwatch::with_elapsed_ms(0);
 
-        let service = ScanService::new(scan_repo, app_state);
+        let service = ScanService::new(scan_repo, app_state, clock, id_gen, stopwatch);
 
         let result = service.open_project_by_path("/nonexistent/path");
         assert!(result.is_err());
@@ -520,8 +545,11 @@ mod tests {
             Mutex::new(None),
             Mutex::new("/some/path".to_string()),
         );
+        let clock = crate::ports::hexagonal::MockClock::new(chrono::Utc::now());
+        let id_gen = crate::ports::hexagonal::MockIdGen::new();
+        let stopwatch = crate::ports::hexagonal::MockStopwatch::with_elapsed_ms(0);
 
-        let service = ScanService::new(scan_repo, app_state);
+        let service = ScanService::new(scan_repo, app_state, clock, id_gen, stopwatch);
         assert_eq!(service.get_scan_status().unwrap(), ScanStatus::Scanning);
     }
 }

@@ -1,30 +1,40 @@
 //! AI application service.
 //! Orchestrates use cases and depends on the provider resolver port.
 
-use crate::ai::{factory::ProviderFactory, AIProvider, AIProviderResolver};
+use crate::ai::{AIProvider, AIProviderResolver};
 use crate::models::{AIConfig, ChatMessage, ChatResponse, NodeExplanation};
+use crate::ports::hexagonal::{Clock, IdGenerator, RandomIdGen, SystemClock};
 use crate::Result;
+use super::factory::ProviderFactory;
 
-pub struct AIService<R = ProviderFactory> {
+/// AI application service.
+///
+/// Generic over `R: AIProviderResolver`, `C: Clock`, and `I: IdGenerator` so tests
+/// can inject mock doubles for deterministic time/ID generation. The production
+/// composition root (`src-tauri/src/lib.rs`) injects real system adapters.
+pub struct AIService<R, C, I> {
     resolver: R,
+    clock: C,
+    id_gen: I,
 }
 
-impl Default for AIService<ProviderFactory> {
-    fn default() -> Self {
-        Self {
-            resolver: ProviderFactory,
-        }
-    }
-}
-
-impl<R> AIService<R> {
-    pub fn new(resolver: R) -> Self {
-        Self { resolver }
+impl<R, C, I> AIService<R, C, I> {
+    /// Construct a new `AIService`.
+    ///
+    /// `resolver`, `clock`, and `id_gen` are all injected from the composition root.
+    pub fn new(resolver: R, clock: C, id_gen: I) -> Self {
+        Self { resolver, clock, id_gen }
     }
 
     /// Exposes the resolver for use by the `AIServicePort` impl.
     pub(crate) fn resolver(&self) -> &R {
         &self.resolver
+    }
+}
+
+impl Default for AIService<ProviderFactory, SystemClock, RandomIdGen> {
+    fn default() -> Self {
+        Self::new(ProviderFactory, SystemClock, RandomIdGen)
     }
 }
 
@@ -75,10 +85,12 @@ pub trait AIServicePort: Send + Sync {
 }
 
 #[async_trait::async_trait]
-impl<R> AIServicePort for AIService<R>
+impl<R, C, I> AIServicePort for AIService<R, C, I>
 where
     R: AIProviderResolver + Send + Sync,
     R::Provider: Send,
+    C: Clock,
+    I: IdGenerator,
 {
     async fn explain_node_with_context(
         &self,
@@ -144,10 +156,10 @@ where
         // Build full history including the new user message
         let mut full_history = history.to_vec();
         full_history.push(ChatMessage {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: self.id_gen.next_id().to_string(),
             role: crate::models::ChatRole::User,
             content: new_user_message.to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: self.clock.now().to_rfc3339(),
         });
 
         let provider = self.resolver().resolve(config)?;
@@ -218,13 +230,21 @@ mod tests {
         }
     }
 
+    /// Helper: build an AIService backed by TestResolver with mock clock/id_gen.
+    fn make_test_service(resolver: TestResolver) -> std::sync::Arc<dyn AIServicePort> {
+        use crate::ports::hexagonal::{MockClock, MockIdGen};
+        let clock = MockClock::new(chrono::Utc::now());
+        let id_gen = MockIdGen::new();
+        std::sync::Arc::new(AIService::new(resolver, clock, id_gen))
+    }
+
     #[test]
     fn explain_node_with_context_uses_resolver_and_provider() {
         let seen_provider = Arc::new(Mutex::new(None));
-        let service: std::sync::Arc<dyn AIServicePort> =
-            std::sync::Arc::new(AIService::new(TestResolver {
-                seen_provider: seen_provider.clone(),
-            }));
+        let resolver = TestResolver {
+            seen_provider: seen_provider.clone(),
+        };
+        let service = make_test_service(resolver);
         let rt = tokio::runtime::Runtime::new().unwrap();
         let file_info = crate::models::FileInfo {
             id: "file-1".to_string(),
@@ -258,10 +278,10 @@ mod tests {
     #[test]
     fn chat_with_context_uses_resolver_and_provider() {
         let seen_provider = Arc::new(Mutex::new(None));
-        let service: std::sync::Arc<dyn AIServicePort> =
-            std::sync::Arc::new(AIService::new(TestResolver {
-                seen_provider: seen_provider.clone(),
-            }));
+        let resolver = TestResolver {
+            seen_provider: seen_provider.clone(),
+        };
+        let service = make_test_service(resolver);
         let history = vec![ChatMessage {
             id: "msg-0".to_string(),
             role: ChatRole::User,
@@ -304,8 +324,14 @@ mod tests {
             }
         }
 
-        let service: std::sync::Arc<dyn AIServicePort> =
-            std::sync::Arc::new(AIService::new(FailingResolver));
+        let service: std::sync::Arc<dyn AIServicePort> = {
+            use crate::ports::hexagonal::{MockClock, MockIdGen};
+            std::sync::Arc::new(AIService::new(
+                FailingResolver,
+                MockClock::new(chrono::Utc::now()),
+                MockIdGen::new(),
+            ))
+        };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let graph = crate::models::GraphData {
             nodes: vec![],
@@ -332,20 +358,27 @@ mod tests {
 
     #[test]
     fn aiservice_implements_aiserviceport_trait_object() {
-        // Compile-time assertion: AIService<TestResolver> can be coerced
-        // to Arc<dyn AIServicePort>. If the trait bound ever regresses
+        // Compile-time assertion: AIService<TestResolver, MockClock, MockIdGen>
+        // can be coerced to Arc<dyn AIServicePort>. If the trait bound ever regresses
         // (e.g. someone drops the Send + Sync requirement on the impl),
         // this test fails to compile.
-        fn assert_aiserviceport<R>(service: AIService<R>) -> std::sync::Arc<dyn AIServicePort>
+        use crate::ports::hexagonal::{MockClock, MockIdGen};
+        fn assert_aiserviceport<R, C, I>(service: AIService<R, C, I>) -> std::sync::Arc<dyn AIServicePort>
         where
             R: AIProviderResolver + Send + Sync + 'static,
+            C: Clock + 'static,
+            I: IdGenerator + 'static,
         {
             std::sync::Arc::new(service)
         }
 
-        let service = AIService::new(TestResolver {
-            seen_provider: Arc::new(Mutex::new(None)),
-        });
+        let service = AIService::new(
+            TestResolver {
+                seen_provider: Arc::new(Mutex::new(None)),
+            },
+            MockClock::new(chrono::Utc::now()),
+            MockIdGen::new(),
+        );
         let _boxed: std::sync::Arc<dyn AIServicePort> = assert_aiserviceport(service);
     }
 
@@ -354,10 +387,10 @@ mod tests {
         // Verify that explain_node_with_context builds context using
         // ContextBuilder and calls the provider with the right arguments.
         let seen_provider = Arc::new(Mutex::new(None));
-        let service: std::sync::Arc<dyn AIServicePort> =
-            std::sync::Arc::new(AIService::new(TestResolver {
-                seen_provider: seen_provider.clone(),
-            }));
+        let resolver = TestResolver {
+            seen_provider: seen_provider.clone(),
+        };
+        let service = make_test_service(resolver);
         let rt = tokio::runtime::Runtime::new().unwrap();
         let file_info = crate::models::FileInfo {
             id: "node-1".to_string(),
@@ -419,10 +452,10 @@ mod tests {
     fn chat_with_context_builds_context_and_calls_provider() {
         // Verify that chat_with_context builds context and calls provider.
         let seen_provider = Arc::new(Mutex::new(None));
-        let service: std::sync::Arc<dyn AIServicePort> =
-            std::sync::Arc::new(AIService::new(TestResolver {
-                seen_provider: seen_provider.clone(),
-            }));
+        let resolver = TestResolver {
+            seen_provider: seen_provider.clone(),
+        };
+        let service = make_test_service(resolver);
         let rt = tokio::runtime::Runtime::new().unwrap();
         let graph = crate::models::GraphData {
             nodes: vec![],
@@ -454,5 +487,95 @@ mod tests {
         assert_eq!(response.message.role.to_string(), "assistant");
         // TestProvider.format is "{context}:{messages.len()}", so with 2 messages and context="..."
         assert!(response.message.content.contains(':'));
+    }
+
+    #[test]
+    fn chat_with_context_uses_deterministic_id_and_timestamp_from_ports() {
+        struct CapturingProvider {
+            seen_messages: Arc<Mutex<Vec<ChatMessage>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl AIProvider for CapturingProvider {
+            async fn explain_node(
+                &self,
+                _node_id: &str,
+                _code_context: &str,
+                _dependencies: &[String],
+            ) -> Result<NodeExplanation> {
+                unreachable!()
+            }
+
+            async fn chat(&self, messages: &[ChatMessage], _context: &str) -> Result<ChatResponse> {
+                *self.seen_messages.lock().unwrap() = messages.to_vec();
+                Ok(ChatResponse {
+                    message: ChatMessage {
+                        id: "assistant-1".to_string(),
+                        role: ChatRole::Assistant,
+                        content: "ok".to_string(),
+                        timestamp: "2026-06-07T00:00:00Z".to_string(),
+                    },
+                    referenced_nodes: None,
+                })
+            }
+        }
+
+        struct CapturingResolver {
+            seen_messages: Arc<Mutex<Vec<ChatMessage>>>,
+        }
+
+        impl AIProviderResolver for CapturingResolver {
+            type Provider = CapturingProvider;
+
+            fn resolve(&self, _config: &AIConfig) -> Result<Self::Provider> {
+                Ok(CapturingProvider {
+                    seen_messages: self.seen_messages.clone(),
+                })
+            }
+        }
+
+        let seen_messages = Arc::new(Mutex::new(Vec::new()));
+        let fixed_now = chrono::DateTime::parse_from_rfc3339("2026-06-10T12:34:56Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let service = AIService::new(
+            CapturingResolver {
+                seen_messages: seen_messages.clone(),
+            },
+            crate::ports::hexagonal::MockClock::new(fixed_now),
+            crate::ports::hexagonal::MockIdGen::new(),
+        );
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let graph = crate::models::GraphData {
+            nodes: vec![],
+            edges: vec![],
+            project_id: "p1".to_string(),
+            generated_at: "2026-06-09T00:00:00Z".to_string(),
+        };
+        let history = vec![ChatMessage {
+            id: "msg-0".to_string(),
+            role: ChatRole::User,
+            content: "previous".to_string(),
+            timestamp: "2026-06-09T00:00:00Z".to_string(),
+        }];
+
+        rt.block_on(service.chat_with_context(
+            &config("anthropic"),
+            "p1",
+            "/repo",
+            &[],
+            &graph,
+            &history,
+            "hello",
+        ))
+        .unwrap();
+
+        let seen_messages = seen_messages.lock().unwrap();
+        let appended = seen_messages.last().expect("new user message should be appended");
+        assert_eq!(appended.id, uuid::Uuid::nil().to_string());
+        assert_eq!(appended.timestamp, "2026-06-10T12:34:56+00:00");
+        assert_eq!(appended.content, "hello");
+        assert_eq!(appended.role.to_string(), "user");
     }
 }

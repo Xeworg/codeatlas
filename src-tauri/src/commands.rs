@@ -56,6 +56,12 @@ pub struct AppState {
     pub analysis_repo: Arc<dyn engine::ports::AnalysisDataSource>,
     /// Workspace repository port — consumed by 13 workspace commands in B.7.
     pub workspace_repo: Arc<dyn engine::ports::WorkspaceRepository>,
+    /// Clock port — injectable wall-clock time (UTC).
+    pub clock: Arc<dyn engine::Clock>,
+    /// ID generator port — injectable UUID generation.
+    pub id_gen: Arc<dyn engine::IdGenerator>,
+    /// Stopwatch port — injectable elapsed-time measurement.
+    pub stopwatch: Arc<dyn engine::Stopwatch>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -88,7 +94,13 @@ pub async fn scan_project(path: String, state: State<'_, AppState>) -> Result<Sc
         &state.ai_config,
         &state.project_root,
     );
-    let service = ScanService::new(scan_repo, app_state_adapter);
+    let service = ScanService::new(
+        scan_repo,
+        app_state_adapter,
+        state.clock.clone(),
+        state.id_gen.clone(),
+        state.stopwatch.clone(),
+    );
     service.scan_project(&path).map_err(to_ipc_error)
 }
 
@@ -108,7 +120,13 @@ pub async fn open_project_by_path(
         &state.ai_config,
         &state.project_root,
     );
-    let service = ScanService::new(scan_repo, app_state_adapter);
+    let service = ScanService::new(
+        scan_repo,
+        app_state_adapter,
+        state.clock.clone(),
+        state.id_gen.clone(),
+        state.stopwatch.clone(),
+    );
     service.open_project_by_path(&path).map_err(to_ipc_error)
 }
 
@@ -124,7 +142,13 @@ pub async fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusRes
         &state.ai_config,
         &state.project_root,
     );
-    let service = ScanService::new(scan_repo, app_state_adapter);
+    let service = ScanService::new(
+        scan_repo,
+        app_state_adapter,
+        state.clock.clone(),
+        state.id_gen.clone(),
+        state.stopwatch.clone(),
+    );
     let status = service.get_scan_status().map_err(to_ipc_error)?;
     let status_str = match status {
         engine::models::ScanStatus::Idle => "idle",
@@ -157,7 +181,13 @@ pub async fn cancel_scan(scan_id: String, state: State<'_, AppState>) -> Result<
         &state.ai_config,
         &state.project_root,
     );
-    let service = ScanService::new(scan_repo, app_state_adapter);
+    let service = ScanService::new(
+        scan_repo,
+        app_state_adapter,
+        state.clock.clone(),
+        state.id_gen.clone(),
+        state.stopwatch.clone(),
+    );
     service.cancel(&scan_id).await.map_err(to_ipc_error)
 }
 
@@ -351,7 +381,7 @@ pub async fn explain_node(
             nodes: vec![],
             edges: vec![],
             project_id: project_id.clone(),
-            generated_at: chrono::Utc::now().to_rfc3339(),
+            generated_at: state.clock.now().to_rfc3339(),
         });
 
     // Load outline items for this file (non-blocking; empty outline is fine)
@@ -420,16 +450,16 @@ pub async fn chat(
             nodes: vec![],
             edges: vec![],
             project_id: project_id.clone(),
-            generated_at: chrono::Utc::now().to_rfc3339(),
+            generated_at: state.clock.now().to_rfc3339(),
         });
 
     // Add user message to history
     let mut full_history = history;
     full_history.push(ChatMessage {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: state.id_gen.next_id().to_string(),
         role: engine::models::ChatRole::User,
         content: message.clone(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: state.clock.now().to_rfc3339(),
     });
 
     state
@@ -464,7 +494,8 @@ pub fn get_architecture_detection(
 ) -> Result<ArchitectureDetectionResponse, String> {
     let analysis_repo = state.analysis_repo.clone();
     let graph_repo = state.graph_repo.clone();
-    let service = AnalysisService::new(analysis_repo, graph_repo);
+    let clock = state.clock.clone();
+    let service = AnalysisService::new(analysis_repo, graph_repo, clock);
     service
         .get_architecture_detection(&project_id)
         .map_err(to_ipc_error)
@@ -480,7 +511,8 @@ pub fn get_impact_analysis(
 ) -> Result<ImpactAnalysisResponse, String> {
     let analysis_repo = state.analysis_repo.clone();
     let graph_repo = state.graph_repo.clone();
-    let service = AnalysisService::new(analysis_repo, graph_repo);
+    let clock = state.clock.clone();
+    let service = AnalysisService::new(analysis_repo, graph_repo, clock);
     service
         .get_impact_analysis(&project_id, &node_id)
         .map_err(to_ipc_error)
@@ -495,7 +527,8 @@ pub fn get_graph_insights(
 ) -> Result<GraphInsightsResponse, String> {
     let analysis_repo = state.analysis_repo.clone();
     let graph_repo = state.graph_repo.clone();
-    let service = AnalysisService::new(analysis_repo, graph_repo);
+    let clock = state.clock.clone();
+    let service = AnalysisService::new(analysis_repo, graph_repo, clock);
     service
         .get_graph_insights(&project_id)
         .map_err(to_ipc_error)
@@ -511,7 +544,8 @@ pub fn export_view(
 ) -> Result<ExportPayloadResponse, String> {
     let analysis_repo = state.analysis_repo.clone();
     let graph_repo = state.graph_repo.clone();
-    let service = AnalysisService::new(analysis_repo, graph_repo);
+    let clock = state.clock.clone();
+    let service = AnalysisService::new(analysis_repo, graph_repo, clock);
     service
         .export_view(&project_id, format)
         .map_err(to_ipc_error)

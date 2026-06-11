@@ -11,6 +11,20 @@ use std::sync::Mutex;
 
 use engine::models::{FileInfo, ImportInfo, OutlineItem, ProjectMeta, ScanResult, ScanStatus};
 use engine::ports::{AppStatePort, ScanRepository, ScanRepositoryAdapter};
+use engine::services::ScanService;
+
+fn make_scan_service<S: ScanRepository, A: AppStatePort>(
+    scan_repo: S,
+    app_state: A,
+) -> ScanService<S, A, engine::SystemClock, engine::RandomIdGen, engine::SystemStopwatch> {
+    ScanService::new(
+        scan_repo,
+        app_state,
+        engine::SystemClock,
+        engine::RandomIdGen,
+        engine::SystemStopwatch,
+    )
+}
 
 /// T8.1 — Verify ScanService struct exists and has a scan_project method.
 #[test]
@@ -18,18 +32,29 @@ fn scan_service_exists() {
     // This test is a compile-time assertion: if ScanService exists and
     // is generic over ScanRepository + AppStatePort, this compiles.
     // If ScanService doesn't exist, compilation fails — RED confirms the gap.
-    use engine::services::ScanService;
-
-    fn _assert_scan_service_exists<S: ScanRepository, A: AppStatePort>(_: ScanService<S, A>) {}
+    fn _assert_scan_service_exists<
+        S: ScanRepository,
+        A: AppStatePort,
+        C: engine::Clock,
+        I: engine::IdGenerator,
+        W: engine::Stopwatch,
+    >(
+        _: ScanService<S, A, C, I, W>,
+    ) {
+    }
 }
 
 /// T8.2 — Verify ScanService has open_project_by_path method.
 #[test]
 fn scan_service_has_open_project_by_path_method() {
-    use engine::services::ScanService;
-
-    fn _assert_signature_exists<S: ScanRepository, A: AppStatePort>(
-        _: fn(ScanService<S, A>, &str) -> engine::Result<ScanResult>,
+    fn _assert_signature_exists<
+        S: ScanRepository,
+        A: AppStatePort,
+        C: engine::Clock,
+        I: engine::IdGenerator,
+        W: engine::Stopwatch,
+    >(
+        _: fn(ScanService<S, A, C, I, W>, &str) -> engine::Result<ScanResult>,
     ) {
     }
 }
@@ -37,10 +62,14 @@ fn scan_service_has_open_project_by_path_method() {
 /// T8.3 — Verify ScanService has get_scan_status method.
 #[test]
 fn scan_service_has_get_scan_status_method() {
-    use engine::services::ScanService;
-
-    fn _assert_signature_exists<S: ScanRepository, A: AppStatePort>(
-        _: fn(ScanService<S, A>) -> engine::Result<ScanStatus>,
+    fn _assert_signature_exists<
+        S: ScanRepository,
+        A: AppStatePort,
+        C: engine::Clock,
+        I: engine::IdGenerator,
+        W: engine::Stopwatch,
+    >(
+        _: fn(ScanService<S, A, C, I, W>) -> engine::Result<ScanStatus>,
     ) {
     }
 }
@@ -49,7 +78,6 @@ fn scan_service_has_get_scan_status_method() {
 #[test]
 fn scan_project_transitions_status_correctly() {
     use engine::db::DbPool;
-    use engine::services::ScanService;
 
     // Set up in-memory DB
     let pool = DbPool::in_memory().unwrap();
@@ -107,7 +135,7 @@ fn scan_project_transitions_status_correctly() {
     let statuses_clone = statuses.clone();
     let app_state = TrackingAppState::new(statuses_clone);
 
-    let service = ScanService::new(scan_repo, app_state);
+    let service = make_scan_service(scan_repo, app_state);
 
     // Use a real temp directory so the walker finds actual files
     let tmp = tempfile::TempDir::new().unwrap();
@@ -150,7 +178,6 @@ fn scan_project_transitions_status_correctly() {
 #[test]
 fn scan_project_sets_project_root() {
     use engine::db::DbPool;
-    use engine::services::ScanService;
 
     let pool = DbPool::in_memory().unwrap();
     pool.init_schema().unwrap();
@@ -162,7 +189,7 @@ fn scan_project_sets_project_root() {
         Mutex::new(String::new()),
     );
 
-    let service = ScanService::new(scan_repo, app_state);
+    let service = make_scan_service(scan_repo, app_state);
 
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("main.ts"), "const x = 1;").ok();
@@ -177,8 +204,6 @@ fn scan_project_sets_project_root() {
 /// T8.6 — scan_project: propagates save error as AppError and sets status to Error.
 #[test]
 fn scan_project_propagates_save_error() {
-    use engine::services::ScanService;
-
     // Create a repo that always fails on save
     struct FailingScanRepo;
     impl ScanRepository for FailingScanRepo {
@@ -223,8 +248,7 @@ fn scan_project_propagates_save_error() {
         Mutex::new(String::new()),
     );
 
-    let service = ScanService::new(FailingScanRepo, app_state);
-
+    let service = make_scan_service(FailingScanRepo, app_state);
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("failing.ts"), "export const x = 1;").ok();
 
@@ -243,7 +267,6 @@ fn scan_project_propagates_save_error() {
 #[test]
 fn open_project_by_path_loads_project_and_sets_state() {
     use engine::db::DbPool;
-    use engine::services::ScanService;
 
     let pool = DbPool::in_memory().unwrap();
     pool.init_schema().unwrap();
@@ -256,7 +279,7 @@ fn open_project_by_path_loads_project_and_sets_state() {
         Mutex::new(String::new()),
     );
 
-    let service = ScanService::new(scan_repo, app_state);
+    let service = make_scan_service(scan_repo, app_state);
 
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("test.ts"), "export const y = 2;").ok();
@@ -290,7 +313,6 @@ fn open_project_by_path_loads_project_and_sets_state() {
 #[test]
 fn open_project_by_path_not_found_error() {
     use engine::db::DbPool;
-    use engine::services::ScanService;
 
     let pool = DbPool::in_memory().unwrap();
     pool.init_schema().unwrap();
@@ -302,7 +324,7 @@ fn open_project_by_path_not_found_error() {
         Mutex::new(String::new()),
     );
 
-    let service = ScanService::new(scan_repo, app_state);
+    let service = make_scan_service(scan_repo, app_state);
 
     let result = service.open_project_by_path("/nonexistent/path");
 
@@ -315,7 +337,6 @@ fn open_project_by_path_not_found_error() {
 #[test]
 fn get_scan_status_returns_current_status() {
     use engine::db::DbPool;
-    use engine::services::ScanService;
 
     let pool = DbPool::in_memory().unwrap();
     pool.init_schema().unwrap();
@@ -327,7 +348,7 @@ fn get_scan_status_returns_current_status() {
         Mutex::new("/some/path".to_string()),
     );
 
-    let service = ScanService::new(scan_repo, app_state);
+    let service = make_scan_service(scan_repo, app_state);
 
     let status = service.get_scan_status().unwrap();
     assert_eq!(status, ScanStatus::Scanning);
@@ -337,7 +358,6 @@ fn get_scan_status_returns_current_status() {
 #[test]
 fn scan_project_sets_project_root_on_success() {
     use engine::db::DbPool;
-    use engine::services::ScanService;
 
     let pool = DbPool::in_memory().unwrap();
     pool.init_schema().unwrap();
@@ -349,7 +369,7 @@ fn scan_project_sets_project_root_on_success() {
         Mutex::new(String::new()),
     );
 
-    let service = ScanService::new(scan_repo, app_state);
+    let service = make_scan_service(scan_repo, app_state);
 
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("root_test.ts"), "export const z = 3;").ok();
