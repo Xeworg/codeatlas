@@ -3,10 +3,23 @@
 //! RED PHASE: These tests define the expected behavior. They FAIL before
 //! implementation and PASS after.
 
-use engine::models::ScanStatus;
-use engine::services::ScanService;
-use engine::ports::{ScanRepository, AppStatePort};
 use engine::models::AIConfig;
+use engine::models::ScanStatus;
+use engine::ports::{AppStatePort, ScanRepository};
+use engine::services::ScanService;
+
+fn make_scan_service<S: ScanRepository, A: AppStatePort>(
+    scan_repo: S,
+    app_state: A,
+) -> ScanService<S, A, engine::SystemClock, engine::RandomIdGen, engine::SystemStopwatch> {
+    ScanService::new(
+        scan_repo,
+        app_state,
+        engine::SystemClock,
+        engine::RandomIdGen,
+        engine::SystemStopwatch,
+    )
+}
 
 /// Mock ScanRepository for testing cancel behavior.
 struct MockScanRepo {
@@ -134,7 +147,7 @@ impl AppStatePort for MockAppState {
 async fn cancel_running_scan_returns_ok_and_sets_cancelled() {
     let repo = MockScanRepo::with_scan("scan-1", ScanStatus::Scanning);
     let state = MockAppState::new(ScanStatus::Scanning);
-    let service = ScanService::new(repo, state);
+    let service = make_scan_service(repo, state);
 
     let result = service.cancel("scan-1").await;
 
@@ -146,7 +159,7 @@ async fn cancel_running_scan_returns_ok_and_sets_cancelled() {
 async fn cancel_completed_scan_returns_ok_noop() {
     let repo = MockScanRepo::with_scan("scan-2", ScanStatus::Ready);
     let state = MockAppState::new(ScanStatus::Ready);
-    let service = ScanService::new(repo, state);
+    let service = make_scan_service(repo, state);
 
     let result = service.cancel("scan-2").await;
 
@@ -158,7 +171,7 @@ async fn cancel_completed_scan_returns_ok_noop() {
 async fn cancel_unknown_scan_returns_not_found() {
     let repo = MockScanRepo::new();
     let state = MockAppState::new(ScanStatus::Idle);
-    let service = ScanService::new(repo, state);
+    let service = make_scan_service(repo, state);
 
     let result = service.cancel("ghost-scan").await;
 

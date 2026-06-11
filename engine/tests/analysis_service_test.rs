@@ -60,10 +60,12 @@ fn ensure_graph_insights_table(pool: &DbPool) {
     .unwrap();
 }
 
-fn service(pool: &DbPool) -> AnalysisService<AnalysisDataSourceAdapter, GraphRepositoryAdapter> {
+fn service(
+    pool: &DbPool,
+) -> AnalysisService<AnalysisDataSourceAdapter, GraphRepositoryAdapter, engine::SystemClock> {
     let analysis_repo = AnalysisDataSourceAdapter::new(pool);
     let graph_repo = GraphRepositoryAdapter::new(pool);
-    AnalysisService::new(analysis_repo, graph_repo)
+    AnalysisService::new(analysis_repo, graph_repo, engine::SystemClock)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

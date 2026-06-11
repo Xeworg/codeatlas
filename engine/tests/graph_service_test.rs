@@ -13,8 +13,21 @@
 
 use engine::models::{FileInfo, OutlineItem, ScanStatus};
 use engine::ports::AppStatePort;
-use engine::services::GraphService;
+use engine::services::{GraphService, ScanService};
 use std::sync::Mutex;
+
+fn make_scan_service<S: engine::ports::ScanRepository, A: AppStatePort>(
+    scan_repo: S,
+    app_state: A,
+) -> ScanService<S, A, engine::SystemClock, engine::RandomIdGen, engine::SystemStopwatch> {
+    ScanService::new(
+        scan_repo,
+        app_state,
+        engine::SystemClock,
+        engine::RandomIdGen,
+        engine::SystemStopwatch,
+    )
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock implementations — no DB, pure test doubles
@@ -207,7 +220,7 @@ fn get_graph_builds_fresh_graph_on_cache_miss() {
     let scan_repo_adapter = engine::ports::ScanRepositoryAdapter::new(&pool);
     let app_state_scan =
         engine::ports::AppStatePortAdapter::from_arc_refs(&scan_status, &ai_config, &project_root);
-    let scan_service = engine::services::ScanService::new(scan_repo_adapter, app_state_scan);
+    let scan_service = make_scan_service(scan_repo_adapter, app_state_scan);
 
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("A.ts"), "export const a = 1;").ok();
@@ -281,7 +294,7 @@ fn get_node_details_returns_file_info() {
     let scan_repo_adapter = engine::ports::ScanRepositoryAdapter::new(&pool);
     let app_state_scan =
         engine::ports::AppStatePortAdapter::from_arc_refs(&scan_status, &ai_config, &project_root);
-    let scan_service = engine::services::ScanService::new(scan_repo_adapter, app_state_scan);
+    let scan_service = make_scan_service(scan_repo_adapter, app_state_scan);
 
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("Main.ts"), "export const x = 1;").ok();
@@ -440,7 +453,7 @@ fn get_graph_transitions_status_through_building_graph_to_ready() {
     let scan_repo_adapter = engine::ports::ScanRepositoryAdapter::new(&pool);
     let app_state_scan =
         engine::ports::AppStatePortAdapter::from_arc_refs(&scan_status, &ai_config, &project_root);
-    let scan_service = engine::services::ScanService::new(scan_repo_adapter, app_state_scan);
+    let scan_service = make_scan_service(scan_repo_adapter, app_state_scan);
 
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("Test.ts"), "export const test = 1;").ok();
