@@ -5,7 +5,7 @@
 //! `engine::services::AnalysisService` does not yet exist.
 
 use engine::db::DbPool;
-use engine::ports::{AnalysisRepositoryAdapter, GraphRepositoryAdapter};
+use engine::ports::{AnalysisDataSourceAdapter, GraphRepositoryAdapter};
 use engine::services::AnalysisService;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,8 +60,8 @@ fn ensure_graph_insights_table(pool: &DbPool) {
     .unwrap();
 }
 
-fn service(pool: &DbPool) -> AnalysisService<AnalysisRepositoryAdapter, GraphRepositoryAdapter> {
-    let analysis_repo = AnalysisRepositoryAdapter::new(pool);
+fn service(pool: &DbPool) -> AnalysisService<AnalysisDataSourceAdapter, GraphRepositoryAdapter> {
+    let analysis_repo = AnalysisDataSourceAdapter::new(pool);
     let graph_repo = GraphRepositoryAdapter::new(pool);
     AnalysisService::new(analysis_repo, graph_repo)
 }

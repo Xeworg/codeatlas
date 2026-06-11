@@ -53,7 +53,7 @@ pub struct AppState {
     /// Graph repository port — consumed by graph commands in B.6.
     pub graph_repo: Arc<dyn engine::ports::GraphRepository>,
     /// Analysis repository port — consumed by analysis commands in B.8.
-    pub analysis_repo: Arc<dyn engine::ports::AnalysisRepository>,
+    pub analysis_repo: Arc<dyn engine::ports::AnalysisDataSource>,
     /// Workspace repository port — consumed by 13 workspace commands in B.7.
     pub workspace_repo: Arc<dyn engine::ports::WorkspaceRepository>,
 }
@@ -131,6 +131,7 @@ pub async fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusRes
         engine::models::ScanStatus::Scanning => "scanning",
         engine::models::ScanStatus::BuildingGraph => "building_graph",
         engine::models::ScanStatus::Ready => "ready",
+        engine::models::ScanStatus::Cancelled => "cancelled",
         engine::models::ScanStatus::Error => "error",
     };
     Ok(ScanStatusResponse {

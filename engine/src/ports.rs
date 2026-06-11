@@ -550,7 +550,7 @@ impl WorkspaceRepository for WorkspaceRepositoryAdapter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AnalysisRepository — analysis persistence
+// AnalysisDataSource — analysis persistence
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Port for analysis persistence operations.
@@ -558,7 +558,7 @@ impl WorkspaceRepository for WorkspaceRepositoryAdapter {
 /// Abstracts the persistence of architecture detection results and graph
 /// insights so that `AnalysisService` is decoupled from the concrete
 /// `ProjectRepository` implementation.
-pub trait AnalysisRepository: Send + Sync {
+pub trait AnalysisDataSource: Send + Sync {
     /// Returns a reference to the underlying database pool.
     /// Used by `AnalysisService` to pass to pure analysis functions that
     /// take `&DbPool` directly.
@@ -591,16 +591,16 @@ pub trait AnalysisRepository: Send + Sync {
     ) -> Result<Option<(String, String, f64, f64, String)>>;
 }
 
-/// Adapter that implements `AnalysisRepository` by delegating to `ProjectRepository`.
+/// Adapter that implements `AnalysisDataSource` by delegating to `ProjectRepository`.
 ///
 /// Two constructors: `new(&pool)` for internal tests, `from_arc(Arc<DbPool>)`
-/// for production (stores the adapter inside `Arc<dyn AnalysisRepository>`).
-pub struct AnalysisRepositoryAdapter {
+/// for production (stores the adapter inside `Arc<dyn AnalysisDataSource>`).
+pub struct AnalysisDataSourceAdapter {
     pool: std::sync::Arc<DbPool>,
     inner: crate::db::queries::ProjectRepository<'static>,
 }
 
-impl AnalysisRepositoryAdapter {
+impl AnalysisDataSourceAdapter {
     pub fn new(pool: &crate::db::DbPool) -> Self {
         let pool = std::sync::Arc::new(pool.clone());
         Self {
@@ -617,7 +617,7 @@ impl AnalysisRepositoryAdapter {
     }
 }
 
-impl AnalysisRepository for AnalysisRepositoryAdapter {
+impl AnalysisDataSource for AnalysisDataSourceAdapter {
     fn pool(&self) -> &crate::db::DbPool {
         &self.pool
     }
@@ -844,7 +844,7 @@ impl GraphRepository for std::sync::Arc<dyn GraphRepository> {
     }
 }
 
-impl AnalysisRepository for std::sync::Arc<dyn AnalysisRepository> {
+impl AnalysisDataSource for std::sync::Arc<dyn AnalysisDataSource> {
     fn pool(&self) -> &DbPool {
         (**self).pool()
     }
@@ -1044,7 +1044,7 @@ mod from_arc_tests {
     fn analysis_repository_adapter_from_arc_keeps_pool_alive() {
         let pool = std::sync::Arc::new(make_pool());
         let weak = std::sync::Arc::downgrade(&pool);
-        let adapter = AnalysisRepositoryAdapter::from_arc(pool.clone());
+        let adapter = AnalysisDataSourceAdapter::from_arc(pool.clone());
         drop(pool);
         // The adapter's internal Arc still holds the pool alive; the
         // Weak from the caller can still upgrade.
@@ -1064,6 +1064,6 @@ mod from_arc_tests {
         let _adapter = ScanRepositoryAdapter::new(&pool);
         let _adapter = GraphRepositoryAdapter::new(&pool);
         let _adapter = WorkspaceRepositoryAdapter::new(&pool);
-        let _adapter = AnalysisRepositoryAdapter::new(&pool);
+        let _adapter = AnalysisDataSourceAdapter::new(&pool);
     }
 }

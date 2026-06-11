@@ -11,6 +11,7 @@ pub enum ScanStatus {
     Scanning,
     BuildingGraph,
     Ready,
+    Cancelled,
     Error,
 }
 
