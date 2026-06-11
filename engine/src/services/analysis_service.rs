@@ -20,6 +20,7 @@ use crate::analysis::{
     ArchitectureDetectionResult as EngineArchResult, ImpactAnalysisResult as EngineImpactResult,
     InsightsConfig,
 };
+use crate::ports::hexagonal::Clock;
 use crate::ports::{AnalysisDataSource, GraphRepository};
 use crate::Result;
 use serde::Serialize;
@@ -149,30 +150,34 @@ pub struct ExportMetadata {
 
 /// Application service for advanced analysis and export operations.
 ///
-/// Generic over `A: AnalysisDataSource` and `G: GraphRepository` so that
-/// all operations are fully testable with mock doubles.
+/// Generic over `A: AnalysisDataSource`, `G: GraphRepository`, and `C: Clock` so that
+/// all operations are fully testable with mock doubles. The `Clock` port is used
+/// exclusively by `export_view` to produce deterministic `generated_at` timestamps.
 ///
 /// # Methods
 /// - `get_architecture_detection` — detect architectural pattern from file paths
 /// - `get_impact_analysis` — compute change impact propagation through the graph
 /// - `get_graph_insights` — compute cycles, hotspots, coupling, and density
 /// - `export_view` — assemble export payload from cached graph and insights
-pub struct AnalysisService<'pool, A, G> {
+pub struct AnalysisService<'pool, A, G, C> {
     analysis_repo: A,
     graph_repo: G,
+    clock: C,
     _phantom: std::marker::PhantomData<&'pool ()>,
 }
 
-impl<'pool, A, G> AnalysisService<'pool, A, G>
+impl<'pool, A, G, C> AnalysisService<'pool, A, G, C>
 where
     A: AnalysisDataSource,
     G: GraphRepository,
+    C: Clock,
 {
-    /// Construct a new `AnalysisService` with the given repositories.
-    pub fn new(analysis_repo: A, graph_repo: G) -> Self {
+    /// Construct a new `AnalysisService` with the given repositories and clock.
+    pub fn new(analysis_repo: A, graph_repo: G, clock: C) -> Self {
         Self {
             analysis_repo,
             graph_repo,
+            clock,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -311,7 +316,7 @@ where
                     "nodes": [],
                     "edges": [],
                     "project_id": project_id,
-                    "generated_at": chrono::Utc::now().to_rfc3339(),
+                    "generated_at": self.clock.now().to_rfc3339(),
                 }))
                 .unwrap_or_default()
             });
@@ -349,7 +354,7 @@ where
             insights: insights_json,
             metadata: ExportMetadata {
                 project_id: project_id.to_string(),
-                generated_at: chrono::Utc::now().to_rfc3339(),
+                generated_at: self.clock.now().to_rfc3339(),
             },
         })
     }
