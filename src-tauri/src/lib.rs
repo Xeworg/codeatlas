@@ -51,7 +51,11 @@ pub fn run() {
                 scan_status: std::sync::Arc::new(Mutex::new(engine::models::ScanStatus::Idle)),
                 ai_config: std::sync::Arc::new(Mutex::new(None)),
                 project_root: std::sync::Arc::new(Mutex::new(String::new())),
-                ai_service_port: std::sync::Arc::new(engine::ai::AIService::default())
+                ai_service_port: std::sync::Arc::new(engine::ai::AIService::new(
+                    engine::ai::ProviderFactory,
+                    engine::SystemClock,
+                    engine::RandomIdGen,
+                ))
                     as std::sync::Arc<dyn engine::ai::AIServicePort>,
                 scan_repo: std::sync::Arc::new(engine::ports::ScanRepositoryAdapter::from_arc(
                     std::sync::Arc::new(pool.clone()),
@@ -72,6 +76,12 @@ pub fn run() {
                     )),
                 )
                     as std::sync::Arc<dyn engine::ports::WorkspaceRepository>,
+                clock: std::sync::Arc::new(engine::SystemClock)
+                    as std::sync::Arc<dyn engine::Clock>,
+                id_gen: std::sync::Arc::new(engine::RandomIdGen)
+                    as std::sync::Arc<dyn engine::IdGenerator>,
+                stopwatch: std::sync::Arc::new(engine::SystemStopwatch)
+                    as std::sync::Arc<dyn engine::Stopwatch>,
             };
 
             app.manage(app_state);
