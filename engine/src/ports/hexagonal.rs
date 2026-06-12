@@ -138,7 +138,8 @@ impl Clone for MockIdGen {
     fn clone(&self) -> Self {
         Self {
             counter: std::sync::atomic::AtomicU64::new(
- self.counter.load(std::sync::atomic::Ordering::SeqCst)),
+                self.counter.load(std::sync::atomic::Ordering::SeqCst),
+            ),
         }
     }
 }
@@ -159,7 +160,8 @@ impl MockIdGen {
     /// Advance the counter by `n`. Used by tests that want to inject a
     /// specific ID without calling `next_id()`.
     pub fn advance_by(&self, n: u64) {
-        self.counter.fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+        self.counter
+            .fetch_add(n, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -171,7 +173,9 @@ impl Default for MockIdGen {
 
 impl IdGenerator for MockIdGen {
     fn next_id(&self) -> Uuid {
-        let n = self.counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let n = self
+            .counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if n == 0 {
             // Call 0: return nil UUID
             Uuid::nil()
@@ -233,10 +237,7 @@ impl Stopwatch for SystemStopwatch {
     }
 
     fn elapsed_ms(&self, handle: &StopwatchHandle) -> u64 {
-        handle
-            .as_instant()
-            .elapsed()
-            .as_millis() as u64
+        handle.as_instant().elapsed().as_millis() as u64
     }
 }
 
@@ -263,7 +264,7 @@ impl Clone for MockStopwatch {
     fn clone(&self) -> Self {
         Self {
             elapsed_ms: std::sync::atomic::AtomicU64::new(
-                self.elapsed_ms.load(std::sync::atomic::Ordering::SeqCst)
+                self.elapsed_ms.load(std::sync::atomic::Ordering::SeqCst),
             ),
         }
     }
@@ -286,7 +287,8 @@ impl MockStopwatch {
 
     /// Overwrite the returned elapsed value for all handles.
     pub fn set_elapsed_ms(&self, ms: u64) {
-        self.elapsed_ms.store(ms, std::sync::atomic::Ordering::SeqCst);
+        self.elapsed_ms
+            .store(ms, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -425,9 +427,9 @@ mod tests {
         id_gen.advance_by(5);
         assert_eq!(id_gen.counter(), 5);
         let _ = id_gen.next_id(); // call 0 → nil (counter already5, n=5, nil)
-        // Actually: counter starts at 0. advance_by(5) sets to 5.
-        // next_id: n=5 → returns Uuid::from_u64_pair(5, 0)
-        // counter becomes 6
+                                  // Actually: counter starts at 0. advance_by(5) sets to 5.
+                                  // next_id: n=5 → returns Uuid::from_u64_pair(5, 0)
+                                  // counter becomes 6
         assert_eq!(id_gen.counter(), 6);
     }
 

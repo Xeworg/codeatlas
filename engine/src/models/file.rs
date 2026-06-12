@@ -200,6 +200,25 @@ pub struct ImportInfo {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FileMeta — minimal file record for analysis DataSource port
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Minimal file record returned by `AnalysisDataSource::list_files_for_project`.
+///
+/// A subset of `FileInfo` with only the fields needed for analysis:
+/// id, path, name, extension, and line count. Symbols are excluded to avoid
+/// the overhead of hydrating them from the database for pure analysis queries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMeta {
+    pub id: String,
+    pub path: String,
+    pub name: String,
+    pub extension: String,
+    pub lines: u32,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests — file models
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(test)]

@@ -5,12 +5,13 @@
 //!   - AIService         (main consumption surface)
 //!   - AIProviderResolver (trait bound used by AIService)
 //!   - AIProvider        (trait needed by resolver implementations)
-//!   - ContextBuilder    (public utility)
+//!   - ExplainContext, ChatContext (DTOs returned by preparation methods)
 //!
 //! And does NOT expose concrete adapter implementation details:
 //!   - AnthropicProvider  (concrete provider — internal, module is private)
 //!   - ResolvedProvider   (dispatch enum — internal, module is private)
 //!   - ProviderFactory    (concrete factory — internal, module is private)
+//!   - ContextBuilder     (pub(crate) — internal utility, not public API)
 //!
 //! TDD contract:
 //!   - RED: test fails to compile when a private type is referenced from outside
@@ -21,7 +22,7 @@
 //!   `state.ai_service.explain_node()` and `state.ai_service.chat()` calls in
 //!   commands.rs working correctly). The PR-7 work is boundary regularization only.
 
-use engine::ai::{AIService, ContextBuilder};
+use engine::ai::{AIService, ChatContext, ExplainContext};
 
 /// Verify the stable public contracts are reachable from `engine::ai`.
 #[test]
@@ -30,11 +31,15 @@ fn stable_public_contracts_are_reachable() {
     // AIService<R> requires R: AIProviderResolver, so this line proves the bound
     // exists in the public API without needing to name ProviderFactory.
     let _ = AIService::default();
-    // ContextBuilder is a zero-sized utility type.
-    let _: ContextBuilder = ContextBuilder;
-    // AIProviderResolver is a trait used as a generic bound in AIService<R>.
-    // Its importability is already proven by AIService::default() compiling
-    // (AIService<R> where R: AIProviderResolver, with R = ProviderFactory).
+    // ExplainContext and ChatContext are public DTOs exported from the ai module.
+    // Their importability from engine::ai proves the preparation methods are reachable.
+    fn _assert_public_dtos()
+    where
+        ExplainContext: Send + Sync,
+        ChatContext: Send + Sync,
+    {
+    }
+    let _: () = _assert_public_dtos();
 }
 
 // ── Boundary proof: concrete adapters are not reachable ───────────────────────

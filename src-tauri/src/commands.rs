@@ -298,7 +298,10 @@ pub async fn get_dependencies(
         &state.project_root,
     );
     let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
-    service.get_dependencies(&node_id).await.map_err(to_ipc_error)
+    service
+        .get_dependencies(&node_id)
+        .await
+        .map_err(to_ipc_error)
 }
 
 /// Get all nodes that depend on the given node (incoming import edges).
@@ -348,15 +351,16 @@ pub async fn explain_node(
 ) -> Result<NodeExplanation, String> {
     use std::path::Path;
 
-    let (config, root_path) = {
-        let cfg = state.ai_config.lock().map_err(to_ipc_error)?.clone();
-        let root = state.project_root.lock().map_err(to_ipc_error)?.clone();
-        (cfg, root)
-    };
+    let cfg = state
+        .ai_config
+        .lock()
+        .map_err(to_ipc_error)?
+        .clone()
+        .ok_or_else(|| "AI not configured".to_string())?;
 
-    let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
+    let root_path = state.project_root.lock().map_err(to_ipc_error)?.clone();
 
-    // Fetch file metadata from DB via scan_repo
+    // Fetch file metadata from DB
     let file_info = state
         .scan_repo
         .get_file_by_id(&node_id)
@@ -371,7 +375,7 @@ pub async fn explain_node(
         String::new()
     };
 
-    // Get cached graph for context (or build minimal one)
+    // Get cached graph (fallback to empty)
     let graph = state
         .graph_repo
         .get_graph_cache(&project_id)
@@ -384,15 +388,21 @@ pub async fn explain_node(
             generated_at: state.clock.now().to_rfc3339(),
         });
 
-    // Load outline items for this file (non-blocking; empty outline is fine)
+    // Load outline (empty outline is fine)
     let outline = state
         .scan_repo
         .get_outline_items(&node_id)
         .unwrap_or_default();
 
+    // Prepare context (DTO) then call provider with it — no redundant rebuild
+    let ctx =
+        state
+            .ai_service_port
+            .prepare_explain_context(&file_info, &file_content, &graph, &outline);
+
     state
         .ai_service_port
-        .explain_node_with_context(&cfg, &file_info, &file_content, &graph, &outline)
+        .explain_node_from_context(&cfg, ctx)
         .await
         .map_err(to_ipc_error)
 }
@@ -406,15 +416,16 @@ pub async fn chat(
 ) -> Result<engine::models::ChatResponse, String> {
     use std::path::Path;
 
-    let (config, root_path) = {
-        let cfg = state.ai_config.lock().map_err(to_ipc_error)?.clone();
-        let root = state.project_root.lock().map_err(to_ipc_error)?.clone();
-        (cfg, root)
-    };
+    let cfg = state
+        .ai_config
+        .lock()
+        .map_err(to_ipc_error)?
+        .clone()
+        .ok_or_else(|| "AI not configured".to_string())?;
 
-    let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
+    let root_path = state.project_root.lock().map_err(to_ipc_error)?.clone();
 
-    // Get project root from DB (fall back to state.project_root if not persisted)
+    // Resolve project root (DB or state fallback)
     let root = state
         .scan_repo
         .get_project(&project_id)
@@ -422,13 +433,11 @@ pub async fn chat(
         .and_then(|(_, r, _)| if r.is_empty() { None } else { Some(r) })
         .unwrap_or(root_path);
 
-    // Fetch project files from DB
+    // Fetch project files and read their contents (limit to 10)
     let files = state
         .scan_repo
         .get_files(&project_id)
         .map_err(to_ipc_error)?;
-
-    // Read file contents for context (limit to first 10 files to avoid overhead)
     let file_contents: Vec<(String, String)> = files
         .iter()
         .take(10)
@@ -440,7 +449,7 @@ pub async fn chat(
         })
         .collect();
 
-    // Get graph for structure context
+    // Get cached graph (fallback to empty)
     let graph = state
         .graph_repo
         .get_graph_cache(&project_id)
@@ -453,26 +462,16 @@ pub async fn chat(
             generated_at: state.clock.now().to_rfc3339(),
         });
 
-    // Add user message to history
-    let mut full_history = history;
-    full_history.push(ChatMessage {
-        id: state.id_gen.next_id().to_string(),
-        role: engine::models::ChatRole::User,
-        content: message.clone(),
-        timestamp: state.clock.now().to_rfc3339(),
-    });
+    // prepare_chat_context builds full_history with exactly ONE user-message push
+    // (double-push bug fixed: no push here, only in prepare_chat_context)
+    let ctx =
+        state
+            .ai_service_port
+            .prepare_chat_context(&file_contents, &graph, &history, &message);
 
     state
         .ai_service_port
-        .chat_with_context(
-            &cfg,
-            &project_id,
-            &root,
-            &file_contents,
-            &graph,
-            &full_history,
-            &message,
-        )
+        .chat_from_context(&cfg, ctx)
         .await
         .map_err(to_ipc_error)
 }

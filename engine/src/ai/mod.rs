@@ -8,9 +8,8 @@ mod factory;
 mod resolved;
 mod service;
 
-// AnthropicProvider is internal; do not expose as public API.
-pub use context::ContextBuilder;
+// ProviderFactory is needed by AIService::default() in the engine crate.
 pub use factory::{AIProviderResolver, ProviderFactory};
 pub use provider::AIProvider;
-// ResolvedProvider is internal; do not expose as public API.
-pub use service::{AIService, AIServicePort};
+// ContextBuilder is pub(crate) — internal to engine only.
+pub use service::{AIService, AIServicePort, ChatContext, ExplainContext};

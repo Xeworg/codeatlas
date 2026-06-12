@@ -242,7 +242,10 @@ impl<'pool> ProjectRepository<'pool> {
     }
 
     /// Get the current scan status for a project by project ID.
-    pub fn get_scan_status(&self, project_id: &str) -> SqliteResult<Option<crate::models::ScanStatus>> {
+    pub fn get_scan_status(
+        &self,
+        project_id: &str,
+    ) -> SqliteResult<Option<crate::models::ScanStatus>> {
         self.pool.with_connection(|conn| {
             let mut stmt = conn.prepare("SELECT status FROM projects WHERE id = ?1")?;
             let status_str: Option<String> = stmt
@@ -387,7 +390,10 @@ impl<'pool> ProjectRepository<'pool> {
 
     /// Get all nodes that the given node depends on (outgoing import edges).
     /// Returns nodes that the given node imports.
-    pub fn get_node_outgoing_edges(&self, node_id: &str) -> SqliteResult<Vec<crate::models::NodeRef>> {
+    pub fn get_node_outgoing_edges(
+        &self,
+        node_id: &str,
+    ) -> SqliteResult<Vec<crate::models::NodeRef>> {
         self.pool.with_connection(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT f.id, f.path, i.target_module, i.import_names
@@ -400,7 +406,8 @@ impl<'pool> ProjectRepository<'pool> {
                 let path: String = row.get(1)?;
                 let target_module: Option<String> = row.get(2)?;
                 let import_names_json: String = row.get(3)?;
-                let imports: Vec<String> = serde_json::from_str(&import_names_json).unwrap_or_default();
+                let imports: Vec<String> =
+                    serde_json::from_str(&import_names_json).unwrap_or_default();
                 Ok(crate::models::NodeRef::new(
                     id,
                     path,
@@ -414,7 +421,10 @@ impl<'pool> ProjectRepository<'pool> {
 
     /// Get all nodes that depend on the given node (incoming import edges).
     /// Returns nodes that import the given node.
-    pub fn get_node_incoming_edges(&self, node_id: &str) -> SqliteResult<Vec<crate::models::NodeRef>> {
+    pub fn get_node_incoming_edges(
+        &self,
+        node_id: &str,
+    ) -> SqliteResult<Vec<crate::models::NodeRef>> {
         self.pool.with_connection(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT f.id, f.path, i.target_module, i.import_names
@@ -427,7 +437,8 @@ impl<'pool> ProjectRepository<'pool> {
                 let path: String = row.get(1)?;
                 let target_module: Option<String> = row.get(2)?;
                 let import_names_json: String = row.get(3)?;
-                let imports: Vec<String> = serde_json::from_str(&import_names_json).unwrap_or_default();
+                let imports: Vec<String> =
+                    serde_json::from_str(&import_names_json).unwrap_or_default();
                 Ok(crate::models::NodeRef::new(
                     id,
                     path,
