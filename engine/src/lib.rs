@@ -16,9 +16,8 @@ pub mod services;
 pub use db::queries::{C4View, ExecutiveSummary, SnapshotDiff};
 pub use models::{FileInfo, GraphData, NodeType, ScanResult, ScanStatus};
 pub use ports::hexagonal::{
-    Clock, SystemClock, MockClock,
-    IdGenerator, RandomIdGen, MockIdGen,
-    Stopwatch, SystemStopwatch, MockStopwatch, StopwatchHandle,
+    Clock, IdGenerator, MockClock, MockIdGen, MockStopwatch, RandomIdGen, Stopwatch,
+    StopwatchHandle, SystemClock, SystemStopwatch,
 };
 pub use thiserror::Error;
 

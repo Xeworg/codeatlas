@@ -47,7 +47,10 @@ impl ScanRepository for MockScanRepo {
         unimplemented!()
     }
 
-    fn get_project_by_path(&self, _root_path: &str) -> engine::Result<Option<engine::models::ProjectMeta>> {
+    fn get_project_by_path(
+        &self,
+        _root_path: &str,
+    ) -> engine::Result<Option<engine::models::ProjectMeta>> {
         unimplemented!()
     }
 
@@ -71,11 +74,18 @@ impl ScanRepository for MockScanRepo {
         unimplemented!()
     }
 
-    fn save_outline_items(&self, _file_id: &str, _items: &[engine::models::OutlineItem]) -> engine::Result<()> {
+    fn save_outline_items(
+        &self,
+        _file_id: &str,
+        _items: &[engine::models::OutlineItem],
+    ) -> engine::Result<()> {
         unimplemented!()
     }
 
-    fn get_outline_items(&self, _file_id: &str) -> engine::Result<Vec<engine::models::OutlineItem>> {
+    fn get_outline_items(
+        &self,
+        _file_id: &str,
+    ) -> engine::Result<Vec<engine::models::OutlineItem>> {
         unimplemented!()
     }
 
@@ -89,7 +99,9 @@ impl ScanRepository for MockScanRepo {
         let status = scans.get(scan_id).copied();
         match status {
             None => Err(engine::AppError::NotFound(scan_id.to_string())),
-            Some(ScanStatus::Idle | ScanStatus::Ready | ScanStatus::Cancelled | ScanStatus::Error) => {
+            Some(
+                ScanStatus::Idle | ScanStatus::Ready | ScanStatus::Cancelled | ScanStatus::Error,
+            ) => {
                 // No-op for non-cancellable states
                 Ok(())
             }
@@ -163,7 +175,10 @@ async fn cancel_completed_scan_returns_ok_noop() {
 
     let result = service.cancel("scan-2").await;
 
-    assert!(result.is_ok(), "cancel should return Ok for completed scan (no-op)");
+    assert!(
+        result.is_ok(),
+        "cancel should return Ok for completed scan (no-op)"
+    );
 }
 
 /// Test: Unknown scan returns NotFound error.

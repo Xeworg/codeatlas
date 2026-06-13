@@ -6,7 +6,7 @@ const MAX_CONTEXT_BYTES: usize = 8 * 1024; // 8KB cap
 const MAX_DEPS: usize = 5;
 const MAX_DEPENDENTS: usize = 3;
 
-pub struct ContextBuilder;
+pub(crate) struct ContextBuilder;
 
 impl ContextBuilder {
     /// Extract source lines for a specific line range.

@@ -631,6 +631,13 @@ pub trait AnalysisDataSource: Send + Sync {
         &self,
         project_id: &str,
     ) -> Result<Option<(String, String, f64, f64, String)>>;
+
+    /// List all files belonging to a project, with minimal metadata.
+    ///
+    /// Used by analysis functions that need file paths/lines but do not
+    /// require full `FileInfo` with hydrated symbols. The returned `FileMeta`
+    /// is a lightweight subset (id, path, name, extension, lines only).
+    fn list_files_for_project(&self, project_id: &str) -> Result<Vec<crate::models::FileMeta>>;
 }
 
 /// Adapter that implements `AnalysisDataSource` by delegating to `ProjectRepository`.
@@ -702,6 +709,24 @@ impl AnalysisDataSource for AnalysisDataSourceAdapter {
     ) -> Result<Option<(String, String, f64, f64, String)>> {
         self.inner
             .get_cached_graph_insights(project_id)
+            .map_err(|e| crate::AppError::Database(e.to_string()))
+    }
+
+    fn list_files_for_project(&self, project_id: &str) -> Result<Vec<crate::models::FileMeta>> {
+        self.inner
+            .get_files(project_id)
+            .map(|files| {
+                files
+                    .into_iter()
+                    .map(|f| crate::models::FileMeta {
+                        id: f.id,
+                        path: f.path,
+                        name: f.name,
+                        extension: f.extension,
+                        lines: f.lines,
+                    })
+                    .collect()
+            })
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 }
@@ -934,6 +959,9 @@ impl AnalysisDataSource for std::sync::Arc<dyn AnalysisDataSource> {
     ) -> Result<Option<(String, String, f64, f64, String)>> {
         (**self).get_cached_graph_insights(project_id)
     }
+    fn list_files_for_project(&self, project_id: &str) -> Result<Vec<crate::models::FileMeta>> {
+        (**self).list_files_for_project(project_id)
+    }
 }
 
 impl WorkspaceRepository for std::sync::Arc<dyn WorkspaceRepository> {
@@ -1120,6 +1148,58 @@ mod from_arc_tests {
         let _adapter = WorkspaceRepositoryAdapter::new(&pool);
         let _adapter = AnalysisDataSourceAdapter::new(&pool);
     }
+
+    #[test]
+    fn list_files_for_project_known_project() {
+        let pool = make_pool();
+        let scan_adapter = ScanRepositoryAdapter::new(&pool);
+        let adapter = AnalysisDataSourceAdapter::new(&pool);
+
+        // Seed a project with files via save_scan_result
+        let scan_result = crate::models::ScanResult {
+            project_id: "test-project".into(),
+            project_name: "Test".into(),
+            root_path: "test-root".into(),
+            files_count: 1,
+            symbols_count: 0,
+            imports_count: 0,
+            files: vec![crate::models::FileInfo {
+                id: "file-1".into(),
+                path: "src/main.rs".into(),
+                name: "main.rs".into(),
+                extension: "rs".into(),
+                symbols: vec![],
+                lines: 42,
+            }],
+            scan_duration_ms: 0,
+            status: crate::models::ScanStatus::Ready,
+            error: None,
+        };
+        scan_adapter
+            .save_scan_result(&scan_result)
+            .expect("scan result saved");
+
+        let files = adapter
+            .list_files_for_project("test-project")
+            .expect("query ok");
+
+        assert!(!files.is_empty(), "known project should return files");
+        let first = files.first().expect("has first file");
+        assert_eq!(first.id, "file-1");
+        assert_eq!(first.lines, 42);
+    }
+
+    #[test]
+    fn list_files_for_project_unknown_project_returns_empty() {
+        let pool = make_pool();
+        let adapter = AnalysisDataSourceAdapter::new(&pool);
+
+        let files = adapter
+            .list_files_for_project("no-such-project")
+            .expect("query ok");
+
+        assert!(files.is_empty(), "unknown project should return empty Vec");
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1132,7 +1212,6 @@ pub mod hexagonal;
 // so callers can use `engine::ports::{Clock, IdGenerator, Stopwatch}` without
 // knowing the inner module name.
 pub use hexagonal::{
-    Clock, SystemClock, MockClock,
-    IdGenerator, RandomIdGen, MockIdGen,
-    Stopwatch, SystemStopwatch, MockStopwatch, StopwatchHandle,
+    Clock, IdGenerator, MockClock, MockIdGen, MockStopwatch, RandomIdGen, Stopwatch,
+    StopwatchHandle, SystemClock, SystemStopwatch,
 };

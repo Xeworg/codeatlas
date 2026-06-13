@@ -69,7 +69,13 @@ impl<S, A, C, I, W> ScanService<S, A, C, I, W> {
     /// from the composition root. They are kept separate so this service is fully
     /// testable with mock doubles.
     pub fn new(scan_repo: S, state: A, clock: C, id_gen: I, stopwatch: W) -> Self {
-        Self { scan_repo, state, clock, id_gen, stopwatch }
+        Self {
+            scan_repo,
+            state,
+            clock,
+            id_gen,
+            stopwatch,
+        }
     }
 
     /// Access the state port (read-only view for testing).
@@ -84,7 +90,9 @@ impl<S, A, C, I, W> ScanService<S, A, C, I, W> {
     }
 }
 
-impl<S: ScanRepository, A: AppStatePort, C: Clock, I: IdGenerator, W: Stopwatch> ScanService<S, A, C, I, W> {
+impl<S: ScanRepository, A: AppStatePort, C: Clock, I: IdGenerator, W: Stopwatch>
+    ScanService<S, A, C, I, W>
+{
     /// Cancel an in-progress scan.
     ///
     /// Three outcomes:
@@ -95,7 +103,9 @@ impl<S: ScanRepository, A: AppStatePort, C: Clock, I: IdGenerator, W: Stopwatch>
         let status = self.scan_repo.get_scan_status(scan_id)?;
         match status {
             None => Err(AppError::NotFound(scan_id.to_string())),
-            Some(ScanStatus::Idle | ScanStatus::Ready | ScanStatus::Cancelled | ScanStatus::Error) => {
+            Some(
+                ScanStatus::Idle | ScanStatus::Ready | ScanStatus::Cancelled | ScanStatus::Error,
+            ) => {
                 // Non-cancellable state — no-op
                 Ok(())
             }

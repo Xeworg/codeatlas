@@ -47,16 +47,22 @@ pub fn run() {
             }
 
             let pool = db_pool.clone();
+            let scan_repo =
+                engine::ports::ScanRepositoryAdapter::from_arc(std::sync::Arc::new(pool.clone()));
+            let graph_repo =
+                engine::ports::GraphRepositoryAdapter::from_arc(std::sync::Arc::new(pool.clone()));
+            let ai_service_port = std::sync::Arc::new(engine::ai::AIService::new(
+                engine::ai::ProviderFactory,
+                engine::SystemClock,
+                engine::RandomIdGen,
+                scan_repo,
+                graph_repo,
+            )) as std::sync::Arc<dyn engine::ai::AIServicePort>;
             let app_state = AppState {
                 scan_status: std::sync::Arc::new(Mutex::new(engine::models::ScanStatus::Idle)),
                 ai_config: std::sync::Arc::new(Mutex::new(None)),
                 project_root: std::sync::Arc::new(Mutex::new(String::new())),
-                ai_service_port: std::sync::Arc::new(engine::ai::AIService::new(
-                    engine::ai::ProviderFactory,
-                    engine::SystemClock,
-                    engine::RandomIdGen,
-                ))
-                    as std::sync::Arc<dyn engine::ai::AIServicePort>,
+                ai_service_port,
                 scan_repo: std::sync::Arc::new(engine::ports::ScanRepositoryAdapter::from_arc(
                     std::sync::Arc::new(pool.clone()),
                 )) as std::sync::Arc<dyn engine::ports::ScanRepository>,

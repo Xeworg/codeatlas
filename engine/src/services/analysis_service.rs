@@ -192,8 +192,8 @@ where
     ) -> Result<ArchitectureDetectionResponse> {
         let timing_start = std::time::Instant::now();
 
-        let pool = self.analysis_repo.pool();
-        let result = detect_architecture(project_id, pool);
+        let files = self.analysis_repo.list_files_for_project(project_id)?;
+        let result = detect_architecture(&files);
 
         let elapsed_ms = timing_start.elapsed().as_millis() as u64;
         tracing::info!(

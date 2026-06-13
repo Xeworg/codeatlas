@@ -298,7 +298,10 @@ pub async fn get_dependencies(
         &state.project_root,
     );
     let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
-    service.get_dependencies(&node_id).await.map_err(to_ipc_error)
+    service
+        .get_dependencies(&node_id)
+        .await
+        .map_err(to_ipc_error)
 }
 
 /// Get all nodes that depend on the given node (incoming import edges).
@@ -346,53 +349,20 @@ pub async fn explain_node(
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<NodeExplanation, String> {
-    use std::path::Path;
-
-    let (config, root_path) = {
-        let cfg = state.ai_config.lock().map_err(to_ipc_error)?.clone();
-        let root = state.project_root.lock().map_err(to_ipc_error)?.clone();
-        (cfg, root)
-    };
-
-    let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
-
-    // Fetch file metadata from DB via scan_repo
-    let file_info = state
-        .scan_repo
-        .get_file_by_id(&node_id)
+    // Thin shim: all orchestration delegated to AIServicePort::explain_node.
+    // The service layer handles repo calls, graph loading, and file I/O.
+    let cfg = state
+        .ai_config
+        .lock()
         .map_err(to_ipc_error)?
-        .ok_or_else(|| format!("File not found: {}", node_id))?;
+        .clone()
+        .ok_or_else(|| "AI not configured".to_string())?;
 
-    // Read actual file content from disk
-    let file_path = Path::new(&root_path).join(&file_info.path);
-    let file_content = if file_path.exists() {
-        std::fs::read_to_string(&file_path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    // Get cached graph for context (or build minimal one)
-    let graph = state
-        .graph_repo
-        .get_graph_cache(&project_id)
-        .map_err(to_ipc_error)?
-        .and_then(|json| serde_json::from_str::<GraphData>(&json).ok())
-        .unwrap_or_else(|| GraphData {
-            nodes: vec![],
-            edges: vec![],
-            project_id: project_id.clone(),
-            generated_at: state.clock.now().to_rfc3339(),
-        });
-
-    // Load outline items for this file (non-blocking; empty outline is fine)
-    let outline = state
-        .scan_repo
-        .get_outline_items(&node_id)
-        .unwrap_or_default();
+    let root_path = state.project_root.lock().map_err(to_ipc_error)?.clone();
 
     state
         .ai_service_port
-        .explain_node_with_context(&cfg, &file_info, &file_content, &graph, &outline)
+        .explain_node(&cfg, &node_id, &project_id, &root_path)
         .await
         .map_err(to_ipc_error)
 }
@@ -404,75 +374,21 @@ pub async fn chat(
     history: Vec<ChatMessage>,
     state: State<'_, AppState>,
 ) -> Result<engine::models::ChatResponse, String> {
-    use std::path::Path;
-
-    let (config, root_path) = {
-        let cfg = state.ai_config.lock().map_err(to_ipc_error)?.clone();
-        let root = state.project_root.lock().map_err(to_ipc_error)?.clone();
-        (cfg, root)
-    };
-
-    let cfg = config.ok_or_else(|| "AI not configured".to_string())?;
-
-    // Get project root from DB (fall back to state.project_root if not persisted)
-    let root = state
-        .scan_repo
-        .get_project(&project_id)
+    // Thin shim: all orchestration delegated to AIServicePort::chat.
+    // The service layer handles repo calls, file I/O, and graph loading.
+    // Single-push of user message is guaranteed by prepare_chat_context.
+    let cfg = state
+        .ai_config
+        .lock()
         .map_err(to_ipc_error)?
-        .and_then(|(_, r, _)| if r.is_empty() { None } else { Some(r) })
-        .unwrap_or(root_path);
+        .clone()
+        .ok_or_else(|| "AI not configured".to_string())?;
 
-    // Fetch project files from DB
-    let files = state
-        .scan_repo
-        .get_files(&project_id)
-        .map_err(to_ipc_error)?;
-
-    // Read file contents for context (limit to first 10 files to avoid overhead)
-    let file_contents: Vec<(String, String)> = files
-        .iter()
-        .take(10)
-        .filter_map(|f| {
-            let path = Path::new(&root).join(&f.path);
-            std::fs::read_to_string(&path)
-                .ok()
-                .map(|content| (f.path.clone(), content))
-        })
-        .collect();
-
-    // Get graph for structure context
-    let graph = state
-        .graph_repo
-        .get_graph_cache(&project_id)
-        .map_err(to_ipc_error)?
-        .and_then(|json| serde_json::from_str::<GraphData>(&json).ok())
-        .unwrap_or_else(|| GraphData {
-            nodes: vec![],
-            edges: vec![],
-            project_id: project_id.clone(),
-            generated_at: state.clock.now().to_rfc3339(),
-        });
-
-    // Add user message to history
-    let mut full_history = history;
-    full_history.push(ChatMessage {
-        id: state.id_gen.next_id().to_string(),
-        role: engine::models::ChatRole::User,
-        content: message.clone(),
-        timestamp: state.clock.now().to_rfc3339(),
-    });
+    let root_path = state.project_root.lock().map_err(to_ipc_error)?.clone();
 
     state
         .ai_service_port
-        .chat_with_context(
-            &cfg,
-            &project_id,
-            &root,
-            &file_contents,
-            &graph,
-            &full_history,
-            &message,
-        )
+        .chat(&cfg, &project_id, &root_path, &message, &history)
         .await
         .map_err(to_ipc_error)
 }

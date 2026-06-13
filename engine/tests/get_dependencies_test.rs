@@ -2,10 +2,10 @@
 //!
 //! RED PHASE: These tests define the expected behavior.
 
-use engine::models::{FileInfo, NodeRef, ScanStatus};
-use engine::services::GraphService;
-use engine::ports::{AppStatePort, GraphRepository, ScanRepository};
 use engine::models::AIConfig;
+use engine::models::{FileInfo, NodeRef, ScanStatus};
+use engine::ports::{AppStatePort, GraphRepository, ScanRepository};
+use engine::services::GraphService;
 use std::collections::HashMap;
 
 /// Mock GraphRepository for testing get_dependencies and get_dependents.
@@ -52,7 +52,12 @@ impl GraphRepository for MockGraphRepo {
         unimplemented!()
     }
 
-    fn search_files(&self, _project_id: &str, _query: &str, _limit: usize) -> engine::Result<Vec<FileInfo>> {
+    fn search_files(
+        &self,
+        _project_id: &str,
+        _query: &str,
+        _limit: usize,
+    ) -> engine::Result<Vec<FileInfo>> {
         unimplemented!()
     }
 
@@ -60,11 +65,18 @@ impl GraphRepository for MockGraphRepo {
         unimplemented!()
     }
 
-    fn save_outline_items(&self, _file_id: &str, _items: &[engine::models::OutlineItem]) -> engine::Result<()> {
+    fn save_outline_items(
+        &self,
+        _file_id: &str,
+        _items: &[engine::models::OutlineItem],
+    ) -> engine::Result<()> {
         unimplemented!()
     }
 
-    fn get_outline_items(&self, _file_id: &str) -> engine::Result<Vec<engine::models::OutlineItem>> {
+    fn get_outline_items(
+        &self,
+        _file_id: &str,
+    ) -> engine::Result<Vec<engine::models::OutlineItem>> {
         Ok(vec![])
     }
 
@@ -105,7 +117,10 @@ impl ScanRepository for MockScanRepo {
     fn save_scan_result(&self, _result: &engine::models::ScanResult) -> engine::Result<()> {
         Ok(())
     }
-    fn get_project_by_path(&self, _root_path: &str) -> engine::Result<Option<engine::models::ProjectMeta>> {
+    fn get_project_by_path(
+        &self,
+        _root_path: &str,
+    ) -> engine::Result<Option<engine::models::ProjectMeta>> {
         Ok(None)
     }
     fn get_project(&self, _project_id: &str) -> engine::Result<Option<(String, String, i64)>> {
@@ -135,10 +150,17 @@ impl ScanRepository for MockScanRepo {
             Ok(None)
         }
     }
-    fn save_outline_items(&self, _file_id: &str, _items: &[engine::models::OutlineItem]) -> engine::Result<()> {
+    fn save_outline_items(
+        &self,
+        _file_id: &str,
+        _items: &[engine::models::OutlineItem],
+    ) -> engine::Result<()> {
         Ok(())
     }
-    fn get_outline_items(&self, _file_id: &str) -> engine::Result<Vec<engine::models::OutlineItem>> {
+    fn get_outline_items(
+        &self,
+        _file_id: &str,
+    ) -> engine::Result<Vec<engine::models::OutlineItem>> {
         Ok(vec![])
     }
     fn get_scan_status(&self, _project_id: &str) -> engine::Result<Option<ScanStatus>> {
@@ -187,7 +209,10 @@ async fn get_dependencies_returns_deps_for_known_node() {
 
     let result = service.get_dependencies("a-id").await;
 
-    assert!(result.is_ok(), "get_dependencies should return Ok for known node");
+    assert!(
+        result.is_ok(),
+        "get_dependencies should return Ok for known node"
+    );
     let deps = result.unwrap();
     assert_eq!(deps.len(), 2, "node A should have 2 dependencies");
     assert_eq!(deps[0].id, "b-id");
@@ -204,8 +229,14 @@ async fn get_dependencies_returns_empty_for_node_with_no_deps() {
 
     let result = service.get_dependencies("x-id").await;
 
-    assert!(result.is_ok(), "get_dependencies should return Ok for known node");
-    assert!(result.unwrap().is_empty(), "node with no deps should return empty list");
+    assert!(
+        result.is_ok(),
+        "get_dependencies should return Ok for known node"
+    );
+    assert!(
+        result.unwrap().is_empty(),
+        "node with no deps should return empty list"
+    );
 }
 
 /// Test: Unknown node returns NotFound error.
@@ -218,7 +249,10 @@ async fn get_dependencies_returns_not_found_for_unknown_node() {
 
     let result = service.get_dependencies("ghost-node").await;
 
-    assert!(result.is_err(), "get_dependencies should return Err for unknown node");
+    assert!(
+        result.is_err(),
+        "get_dependencies should return Err for unknown node"
+    );
     assert!(matches!(result.unwrap_err(), engine::AppError::NotFound(_)));
 }
 
@@ -236,7 +270,10 @@ async fn get_dependents_returns_deps_for_known_node() {
 
     let result = service.get_dependents("c-id").await;
 
-    assert!(result.is_ok(), "get_dependents should return Ok for known node");
+    assert!(
+        result.is_ok(),
+        "get_dependents should return Ok for known node"
+    );
     let deps = result.unwrap();
     assert_eq!(deps.len(), 2, "node C should have 2 dependents");
     assert_eq!(deps[0].id, "a-id");
@@ -253,8 +290,14 @@ async fn get_dependents_returns_empty_for_node_with_no_deps() {
 
     let result = service.get_dependents("x-id").await;
 
-    assert!(result.is_ok(), "get_dependents should return Ok for known node");
-    assert!(result.unwrap().is_empty(), "node with no dependents should return empty list");
+    assert!(
+        result.is_ok(),
+        "get_dependents should return Ok for known node"
+    );
+    assert!(
+        result.unwrap().is_empty(),
+        "node with no dependents should return empty list"
+    );
 }
 
 /// Test: Unknown node returns NotFound error.
@@ -267,6 +310,9 @@ async fn get_dependents_returns_not_found_for_unknown_node() {
 
     let result = service.get_dependents("ghost-node").await;
 
-    assert!(result.is_err(), "get_dependents should return Err for unknown node");
+    assert!(
+        result.is_err(),
+        "get_dependents should return Err for unknown node"
+    );
     assert!(matches!(result.unwrap_err(), engine::AppError::NotFound(_)));
 }
