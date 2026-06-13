@@ -5,7 +5,7 @@
 //!
 //! Falls back to `unknown` pattern with zero confidence on any error.
 
-use crate::db::DbPool;
+use crate::models::FileMeta;
 
 /// Result of architecture detection for a project.
 #[derive(Debug, Clone)]
@@ -103,7 +103,7 @@ impl std::fmt::Display for ArchitecturePattern {
     }
 }
 
-pub fn detect_architecture(project_id: &str, pool: &DbPool) -> ArchitectureDetectionResult {
+pub fn detect_architecture(files: &[FileMeta]) -> ArchitectureDetectionResult {
     // Load pattern rules (defined inline to avoid const vec! issue).
     let rules: &[(ArchitecturePattern, &[&str], f64)] = &[
         (
@@ -139,17 +139,6 @@ pub fn detect_architecture(project_id: &str, pool: &DbPool) -> ArchitectureDetec
         ),
     ];
 
-    let files: Vec<(String, String)> = match pool.with_connection(|conn| {
-        let mut stmt = conn.prepare("SELECT id, path FROM files WHERE project_id = ?1")?;
-        let rows = stmt.query_map([project_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        rows.collect::<Result<Vec<_>, _>>()
-    }) {
-        Ok(f) => f,
-        Err(_) => return ArchitectureDetectionResult::unknown(),
-    };
-
     // Score each pattern based on matching paths
     let mut pattern_scores: Vec<(ArchitecturePattern, f64)> = vec![
         (ArchitecturePattern::Mvc, 0.0),
@@ -161,8 +150,8 @@ pub fn detect_architecture(project_id: &str, pool: &DbPool) -> ArchitectureDetec
     let mut matching_nodes: Vec<String> = Vec::new();
     let mut matching_reasons: Vec<String> = Vec::new();
 
-    for (file_id, path) in &files {
-        let path_lower = path.to_lowercase();
+    for file in files {
+        let path_lower = file.path.to_lowercase();
         for (pattern, indicators, weight) in rules {
             for indicator in *indicators {
                 if path_lower.contains(indicator) {
@@ -171,11 +160,11 @@ pub fn detect_architecture(project_id: &str, pool: &DbPool) -> ArchitectureDetec
                     {
                         *score += weight;
                     }
-                    matching_nodes.push(file_id.clone());
+                    matching_nodes.push(file.id.clone());
                     matching_reasons.push(format!(
                         "Found '{}' in path '{}'",
                         indicator.trim_end_matches('/'),
-                        path
+                        file.path
                     ));
                 }
             }
@@ -213,6 +202,26 @@ pub fn detect_architecture(project_id: &str, pool: &DbPool) -> ArchitectureDetec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbPool;
+
+    fn load_files(pool: &DbPool) -> Vec<FileMeta> {
+        pool.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, path, name, extension, lines FROM files WHERE project_id = ?1",
+            )?;
+            let rows = stmt.query_map(["proj-test"], |row| {
+                Ok(FileMeta {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    name: row.get(2)?,
+                    extension: row.get(3)?,
+                    lines: row.get(4)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap()
+    }
 
     fn init_schema_with_files(pool: &DbPool, files: &[(&str, &str)]) {
         pool.with_connection(|conn| {
@@ -247,7 +256,8 @@ mod tests {
             ],
         );
 
-        let result = detect_architecture("proj-test", &pool);
+        let files = load_files(&pool);
+        let result = detect_architecture(&files);
         assert_eq!(result.pattern, ArchitecturePattern::Mvc);
         assert!(
             result.confidence > 0.0,
@@ -269,7 +279,8 @@ mod tests {
             ],
         );
 
-        let result = detect_architecture("proj-test", &pool);
+        let files = load_files(&pool);
+        let result = detect_architecture(&files);
         assert_eq!(result.pattern, ArchitecturePattern::Clean);
         assert!(result.confidence > 0.0);
     }
@@ -286,15 +297,14 @@ mod tests {
             ],
         );
 
-        let result = detect_architecture("proj-test", &pool);
+        let files = load_files(&pool);
+        let result = detect_architecture(&files);
         assert_eq!(result.pattern, ArchitecturePattern::Unknown);
     }
 
     #[test]
-    fn db_read_error_returns_unknown_without_crash() {
-        let pool = DbPool::in_memory().unwrap();
-        // No schema, no files — should gracefully return unknown
-        let result = detect_architecture("nonexistent", &pool);
+    fn empty_file_list_returns_unknown_without_crash() {
+        let result = detect_architecture(&[]);
         assert_eq!(result.pattern, ArchitecturePattern::Unknown);
         assert_eq!(result.confidence, 0.0);
         assert!(result.evidence.is_none());
@@ -312,7 +322,8 @@ mod tests {
             ],
         );
 
-        let result = detect_architecture("proj-test", &pool);
+        let files = load_files(&pool);
+        let result = detect_architecture(&files);
         assert!(
             result.evidence.is_some(),
             "Expected evidence for matched paths"

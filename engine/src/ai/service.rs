@@ -1,10 +1,10 @@
 //! AI application service.
 //! Orchestrates use cases and depends on the provider resolver port.
 
-use super::factory::ProviderFactory;
 use crate::ai::{AIProvider, AIProviderResolver};
 use crate::models::{AIConfig, ChatMessage, ChatResponse, NodeExplanation};
-use crate::ports::hexagonal::{Clock, IdGenerator, RandomIdGen, SystemClock};
+use crate::ports::hexagonal::{Clock, IdGenerator};
+use crate::ports::{GraphRepository, ScanRepository};
 use crate::Result;
 use serde::{Deserialize, Serialize};
 
@@ -114,21 +114,28 @@ mod explain_context_tests {
 /// Generic over `R: AIProviderResolver`, `C: Clock`, and `I: IdGenerator` so tests
 /// can inject mock doubles for deterministic time/ID generation. The production
 /// composition root (`src-tauri/src/lib.rs`) injects real system adapters.
-pub struct AIService<R, C, I> {
+/// `S` and `G` are the repository ports used by the thin-shim commands.
+pub struct AIService<R, C, I, S, G> {
     resolver: R,
     clock: C,
     id_gen: I,
+    scan_repo: S,
+    graph_repo: G,
 }
 
-impl<R, C: Clock, I: IdGenerator> AIService<R, C, I> {
+impl<R, C: Clock, I: IdGenerator, S: ScanRepository, G: GraphRepository> AIService<R, C, I, S, G> {
     /// Construct a new `AIService`.
     ///
     /// `resolver`, `clock`, and `id_gen` are all injected from the composition root.
-    pub fn new(resolver: R, clock: C, id_gen: I) -> Self {
+    /// `scan_repo` and `graph_repo` are injected to enable the thin-shim commands
+    /// (`explain_node` / `chat`) that delegate without orchestration.
+    pub fn new(resolver: R, clock: C, id_gen: I, scan_repo: S, graph_repo: G) -> Self {
         Self {
             resolver,
             clock,
             id_gen,
+            scan_repo,
+            graph_repo,
         }
     }
 
@@ -234,12 +241,6 @@ impl<R, C: Clock, I: IdGenerator> AIService<R, C, I> {
     }
 }
 
-impl Default for AIService<ProviderFactory, SystemClock, RandomIdGen> {
-    fn default() -> Self {
-        Self::new(ProviderFactory, SystemClock, RandomIdGen)
-    }
-}
-
 // ─── Port trait ─────────────────────────────────────────────────────────────
 
 /// Port trait through which the presentation layer consumes AI
@@ -324,15 +325,42 @@ pub trait AIServicePort: Send + Sync {
         history: &[ChatMessage],
         new_user_message: &str,
     ) -> Result<ChatResponse>;
+
+    /// Thin-shim command handler: fetches file info, content, graph, and outline
+    /// internally, then delegates to `prepare_explain_context` + `explain_node_from_context`.
+    /// This is the sole entry point for `commands.rs::explain_node` — the Tauri
+    /// layer must NOT orchestrate repo/filesystem work.
+    async fn explain_node(
+        &self,
+        config: &AIConfig,
+        node_id: &str,
+        project_id: &str,
+        root_path: &str,
+    ) -> Result<NodeExplanation>;
+
+    /// Thin-shim command handler: fetches project files, graph, and history
+    /// internally, then delegates to `prepare_chat_context` + `chat_from_context`.
+    /// This is the sole entry point for `commands.rs::chat` — the Tauri layer
+    /// must NOT orchestrate repo/filesystem work.
+    async fn chat(
+        &self,
+        config: &AIConfig,
+        project_id: &str,
+        root_path: &str,
+        message: &str,
+        history: &[ChatMessage],
+    ) -> Result<ChatResponse>;
 }
 
 #[async_trait::async_trait]
-impl<R, C, I> AIServicePort for AIService<R, C, I>
+impl<R, C, I, S, G> AIServicePort for AIService<R, C, I, S, G>
 where
     R: AIProviderResolver + Send + Sync,
     R::Provider: Send,
     C: Clock,
     I: IdGenerator,
+    S: ScanRepository,
+    G: GraphRepository,
 {
     async fn explain_node_with_context(
         &self,
@@ -438,6 +466,100 @@ where
         let provider = self.resolver().resolve(config)?;
         provider.chat(&ctx.full_history, &ctx.context).await
     }
+
+    async fn explain_node(
+        &self,
+        config: &AIConfig,
+        node_id: &str,
+        project_id: &str,
+        root_path: &str,
+    ) -> Result<NodeExplanation> {
+        use std::path::Path;
+
+        // Fetch file info from DB
+        let file_info = self
+            .scan_repo
+            .get_file_by_id(node_id)?
+            .ok_or_else(|| crate::AppError::NotFound(format!("File not found: {}", node_id)))?;
+
+        // Resolve project root (DB root if available, otherwise state fallback)
+        let root = self
+            .scan_repo
+            .get_project(project_id)?
+            .and_then(|(_, r, _)| if r.is_empty() { None } else { Some(r) })
+            .unwrap_or_else(|| root_path.to_string());
+
+        // Read actual file content from disk (join root with relative path)
+        let file_content =
+            std::fs::read_to_string(Path::new(&root).join(&file_info.path)).unwrap_or_default();
+
+        // Get cached graph (fallback to empty)
+        let graph_json = self.graph_repo.get_graph_cache(project_id)?;
+        let graph = graph_json
+            .and_then(|json| serde_json::from_str::<crate::models::GraphData>(&json).ok())
+            .unwrap_or_else(|| crate::models::GraphData {
+                nodes: vec![],
+                edges: vec![],
+                project_id: project_id.to_string(),
+                generated_at: self.clock.now().to_rfc3339(),
+            });
+
+        // Load outline
+        let outline = self
+            .scan_repo
+            .get_outline_items(node_id)
+            .unwrap_or_default();
+
+        // Delegate to prepare + from_context
+        let ctx = self.prepare_explain_context(&file_info, &file_content, &graph, &outline);
+        self.explain_node_from_context(config, ctx).await
+    }
+
+    async fn chat(
+        &self,
+        config: &AIConfig,
+        project_id: &str,
+        root_path: &str,
+        message: &str,
+        history: &[ChatMessage],
+    ) -> Result<ChatResponse> {
+        use std::path::Path;
+
+        // Resolve project root (DB or state fallback)
+        let root = self
+            .scan_repo
+            .get_project(project_id)?
+            .and_then(|(_, r, _)| if r.is_empty() { None } else { Some(r) })
+            .unwrap_or_else(|| root_path.to_string());
+
+        // Fetch project files and read their contents (limit to 10)
+        let files = self.scan_repo.get_files(project_id)?;
+        let file_contents: Vec<(String, String)> = files
+            .iter()
+            .take(10)
+            .filter_map(|f| {
+                let path = Path::new(&root).join(&f.path);
+                std::fs::read_to_string(&path)
+                    .ok()
+                    .map(|content| (f.path.clone(), content))
+            })
+            .collect();
+
+        // Get cached graph (fallback to empty)
+        let graph_json = self.graph_repo.get_graph_cache(project_id)?;
+        let graph = graph_json
+            .and_then(|json| serde_json::from_str::<crate::models::GraphData>(&json).ok())
+            .unwrap_or_else(|| crate::models::GraphData {
+                nodes: vec![],
+                edges: vec![],
+                project_id: project_id.to_string(),
+                generated_at: self.clock.now().to_rfc3339(),
+            });
+
+        // Delegate to prepare + from_context (single push in prepare_chat_context)
+        let ctx = self.prepare_chat_context(&file_contents, &graph, history, message);
+        self.chat_from_context(config, ctx).await
+    }
 }
 
 #[cfg(test)]
@@ -503,12 +625,88 @@ mod tests {
         }
     }
 
+    /// Minimal test doubles for ScanRepository and GraphRepository.
+    /// All methods return empty/None to satisfy the trait bounds without
+    /// affecting tests that don't exercise the new explain_node/chat methods.
+    #[derive(Clone, Default)]
+    struct TestScanRepo;
+    impl ScanRepository for TestScanRepo {
+        fn save_scan_result(&self, _: &crate::models::ScanResult) -> Result<()> {
+            Ok(())
+        }
+        fn get_project_by_path(&self, _: &str) -> Result<Option<crate::models::ProjectMeta>> {
+            Ok(None)
+        }
+        fn get_project(&self, _: &str) -> Result<Option<(String, String, i64)>> {
+            Ok(None)
+        }
+        fn get_files(&self, _: &str) -> Result<Vec<crate::models::FileInfo>> {
+            Ok(vec![])
+        }
+        fn get_imports(&self, _: &str) -> Result<Vec<crate::models::ImportInfo>> {
+            Ok(vec![])
+        }
+        fn save_import(&self, _: &crate::models::ImportInfo) -> Result<()> {
+            Ok(())
+        }
+        fn get_file_by_id(&self, _: &str) -> Result<Option<crate::models::FileInfo>> {
+            Ok(None)
+        }
+        fn save_outline_items(&self, _: &str, _: &[crate::models::OutlineItem]) -> Result<()> {
+            Ok(())
+        }
+        fn get_outline_items(&self, _: &str) -> Result<Vec<crate::models::OutlineItem>> {
+            Ok(vec![])
+        }
+        fn get_scan_status(&self, _: &str) -> Result<Option<crate::models::ScanStatus>> {
+            Ok(None)
+        }
+        fn cancel(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct TestGraphRepo;
+    impl GraphRepository for TestGraphRepo {
+        fn save_graph_cache(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn get_graph_cache(&self, _: &str) -> Result<Option<String>> {
+            Ok(None)
+        }
+        fn search_files(&self, _: &str, _: &str, _: usize) -> Result<Vec<crate::models::FileInfo>> {
+            Ok(vec![])
+        }
+        fn get_project_root_for_file(&self, _: &str) -> Result<Option<String>> {
+            Ok(None)
+        }
+        fn save_outline_items(&self, _: &str, _: &[crate::models::OutlineItem]) -> Result<()> {
+            Ok(())
+        }
+        fn get_outline_items(&self, _: &str) -> Result<Vec<crate::models::OutlineItem>> {
+            Ok(vec![])
+        }
+        fn get_dependencies(&self, _: &str) -> Result<Vec<crate::models::NodeRef>> {
+            Ok(vec![])
+        }
+        fn get_dependents(&self, _: &str) -> Result<Vec<crate::models::NodeRef>> {
+            Ok(vec![])
+        }
+    }
+
     /// Helper: build an AIService backed by TestResolver with mock clock/id_gen.
     fn make_test_service(resolver: TestResolver) -> std::sync::Arc<dyn AIServicePort> {
         use crate::ports::hexagonal::{MockClock, MockIdGen};
         let clock = MockClock::new(chrono::Utc::now());
         let id_gen = MockIdGen::new();
-        std::sync::Arc::new(AIService::new(resolver, clock, id_gen))
+        std::sync::Arc::new(AIService::new(
+            resolver,
+            clock,
+            id_gen,
+            TestScanRepo,
+            TestGraphRepo,
+        ))
     }
 
     #[test]
@@ -603,6 +801,8 @@ mod tests {
                 FailingResolver,
                 MockClock::new(chrono::Utc::now()),
                 MockIdGen::new(),
+                TestScanRepo,
+                TestGraphRepo,
             ))
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -636,13 +836,15 @@ mod tests {
         // (e.g. someone drops the Send + Sync requirement on the impl),
         // this test fails to compile.
         use crate::ports::hexagonal::{MockClock, MockIdGen};
-        fn assert_aiserviceport<R, C, I>(
-            service: AIService<R, C, I>,
+        fn assert_aiserviceport<R, C, I, S, G>(
+            service: AIService<R, C, I, S, G>,
         ) -> std::sync::Arc<dyn AIServicePort>
         where
             R: AIProviderResolver + Send + Sync + 'static,
             C: Clock + 'static,
             I: IdGenerator + 'static,
+            S: ScanRepository + 'static,
+            G: GraphRepository + 'static,
         {
             std::sync::Arc::new(service)
         }
@@ -653,6 +855,8 @@ mod tests {
             },
             MockClock::new(chrono::Utc::now()),
             MockIdGen::new(),
+            TestScanRepo,
+            TestGraphRepo,
         );
         let _boxed: std::sync::Arc<dyn AIServicePort> = assert_aiserviceport(service);
     }
@@ -819,6 +1023,8 @@ mod tests {
             },
             crate::ports::hexagonal::MockClock::new(chrono::Utc::now()),
             crate::ports::hexagonal::MockIdGen::new(),
+            TestScanRepo,
+            TestGraphRepo,
         );
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -878,6 +1084,8 @@ mod tests {
             },
             MockClock::new(chrono::Utc::now()),
             MockIdGen::new(),
+            TestScanRepo,
+            TestGraphRepo,
         );
 
         let file_info = crate::models::FileInfo {
@@ -911,6 +1119,8 @@ mod tests {
             },
             MockClock::new(chrono::Utc::now()),
             MockIdGen::new(),
+            TestScanRepo,
+            TestGraphRepo,
         );
 
         let file_info = crate::models::FileInfo {
@@ -963,6 +1173,8 @@ mod tests {
             },
             MockClock::new(chrono::Utc::now()),
             MockIdGen::new(),
+            TestScanRepo,
+            TestGraphRepo,
         );
 
         let file_info = crate::models::FileInfo {
@@ -1041,6 +1253,8 @@ mod tests {
             },
             MockClock::new(fixed_now),
             MockIdGen::new(),
+            TestScanRepo,
+            TestGraphRepo,
         );
 
         let graph = crate::models::GraphData {
@@ -1081,6 +1295,8 @@ mod tests {
             },
             MockClock::new(chrono::Utc::now()),
             MockIdGen::new(),
+            TestScanRepo,
+            TestGraphRepo,
         );
 
         let graph = crate::models::GraphData {
@@ -1114,6 +1330,8 @@ mod tests {
             },
             MockClock::new(chrono::Utc::now()),
             MockIdGen::new(),
+            TestScanRepo,
+            TestGraphRepo,
         );
 
         let graph = crate::models::GraphData {

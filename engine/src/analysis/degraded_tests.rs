@@ -10,7 +10,7 @@ mod tests {
     use super::super::architecture_detector::ArchitecturePattern;
     use super::super::graph_insights::{compute_graph_insights, InsightsConfig};
     use super::super::impact_engine::{compute_impact, ImpactConfig};
-    use crate::db::DbPool;
+    use crate::{db::DbPool, models::FileMeta};
     use std::time::Duration;
 
     /// T6.4: ArchitectureDetector on empty project → Unknown pattern, 0.0 confidence, null evidence
@@ -19,7 +19,7 @@ mod tests {
         let pool = DbPool::new(":memory:").unwrap();
         pool.init_schema().unwrap();
 
-        let result = detect_architecture("nonexistent-project", &pool);
+        let result = detect_architecture(&Vec::<FileMeta>::new());
         assert!(
             matches!(result.pattern, ArchitecturePattern::Unknown),
             "pattern should be Unknown"

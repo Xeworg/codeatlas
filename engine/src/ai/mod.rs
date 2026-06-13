@@ -8,7 +8,7 @@ mod factory;
 mod resolved;
 mod service;
 
-// ProviderFactory is needed by AIService::default() in the engine crate.
+// ProviderFactory is needed by the composition root in src-tauri.
 pub use factory::{AIProviderResolver, ProviderFactory};
 pub use provider::AIProvider;
 // ContextBuilder is pub(crate) — internal to engine only.
