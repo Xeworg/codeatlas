@@ -8,6 +8,7 @@ use engine::{
     },
     ports::AppStatePortAdapter,
     services::{AnalysisService, GraphService, ScanService},
+    AppError,
 };
 
 use crate::ipc_error::to_ipc_error;
@@ -356,7 +357,7 @@ pub async fn explain_node(
         .lock()
         .map_err(to_ipc_error)?
         .clone()
-        .ok_or_else(|| "AI not configured".to_string())?;
+        .ok_or_else(|| to_ipc_error(AppError::AIUnavailable("AI not configured".to_string())))?;
 
     let root_path = state.project_root.lock().map_err(to_ipc_error)?.clone();
 
@@ -382,7 +383,7 @@ pub async fn chat(
         .lock()
         .map_err(to_ipc_error)?
         .clone()
-        .ok_or_else(|| "AI not configured".to_string())?;
+        .ok_or_else(|| to_ipc_error(AppError::AIUnavailable("AI not configured".to_string())))?;
 
     let root_path = state.project_root.lock().map_err(to_ipc_error)?.clone();
 

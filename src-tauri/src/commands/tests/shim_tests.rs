@@ -31,7 +31,7 @@ fn import_source_file_id_converts_relative_path_to_uuid() {
             source_file_id: "src/service.ts".into(),
             target_file_id: None,
             target_module: Some("./utils".into()),
-            imports: vec!["Helper".to_string()].into(),
+            imports: vec!["Helper".to_string()],
             is_default: false,
             is_type: false,
         },
@@ -40,7 +40,7 @@ fn import_source_file_id_converts_relative_path_to_uuid() {
             source_file_id: "src/utils.rs".into(),
             target_file_id: None,
             target_module: Some("std::collections".into()),
-            imports: vec!["HashMap".to_string()].into(),
+            imports: vec!["HashMap".to_string()],
             is_default: false,
             is_type: false,
         },
@@ -74,7 +74,7 @@ fn path_to_id_map_covers_all_import_sources() {
         pub id: String,
         pub path: String,
     }
-    let file_infos = vec![
+    let file_infos = [
         FakeFileInfo {
             id: "uuid-001".into(),
             path: "src/a.ts".into(),
@@ -106,7 +106,7 @@ fn source_file_id_must_be_uuid_not_relative_path_for_get_imports_query() {
         pub source_file_id: String,
     }
 
-    let files = vec![
+    let files = [
         FakeFile {
             id: "uuid-001".into(),
         },
@@ -116,7 +116,7 @@ fn source_file_id_must_be_uuid_not_relative_path_for_get_imports_query() {
     ];
     let file_ids: Vec<String> = files.iter().map(|f| f.id.clone()).collect();
 
-    let imports = vec![
+    let imports = [
         FakeImport {
             source_file_id: "uuid-001".into(),
         },
@@ -137,4 +137,57 @@ fn source_file_id_must_be_uuid_not_relative_path_for_get_imports_query() {
         .filter(|id| file_ids.contains(id))
         .count();
     assert_eq!(matched, 1);
+}
+
+// =============================================================================
+// Error-boundary tests (C3b: T4)
+// =============================================================================
+
+#[allow(unused_imports)]
+use engine::AppError;
+#[allow(unused_imports)]
+use serde_json::Value;
+
+#[test]
+fn explain_node_ai_unavailable_payload_when_config_is_none() {
+    let app_err = AppError::AIUnavailable("AI not configured".to_string());
+    let raw = crate::ipc_error::to_ipc_error(app_err);
+    let v: Value = serde_json::from_str(&raw).expect("to_ipc_error must produce valid JSON");
+    assert_eq!(v["code"], "AI_UNAVAILABLE");
+    let msg = v["message"].as_str().unwrap();
+    assert!(
+        msg.contains("AI unavailable"),
+        "message must contain AI unavailable"
+    );
+    assert_eq!(
+        v["details"]["reason"].as_str().unwrap(),
+        "AI not configured"
+    );
+}
+
+#[test]
+fn chat_ai_unavailable_payload_when_config_is_none() {
+    let app_err = AppError::AIUnavailable("AI not configured".to_string());
+    let raw = crate::ipc_error::to_ipc_error(app_err);
+    let v: Value = serde_json::from_str(&raw).expect("to_ipc_error must produce valid JSON");
+    assert_eq!(v["code"], "AI_UNAVAILABLE");
+    assert_eq!(
+        v["details"]["reason"].as_str().unwrap(),
+        "AI not configured"
+    );
+}
+
+#[test]
+fn explain_node_file_not_found_payload_when_node_missing() {
+    let node_id = "node-uuid-123";
+    let app_err = AppError::FileNotFound(node_id.to_string());
+    let raw = crate::ipc_error::to_ipc_error(app_err);
+    let v: Value = serde_json::from_str(&raw).expect("to_ipc_error must produce valid JSON");
+    assert_eq!(v["code"], "FILE_NOT_FOUND");
+    let msg = v["message"].as_str().unwrap();
+    assert!(
+        msg.contains("File not found"),
+        "message must contain File not found"
+    );
+    assert_eq!(v["details"]["path"].as_str().unwrap(), node_id);
 }
