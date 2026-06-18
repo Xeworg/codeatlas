@@ -15,6 +15,9 @@ import type {
 } from './types'
 import type { ApiError, ErrorCode } from './types'
 
+// Re-export error helpers from the dedicated errors module for backward compatibility.
+export { toUserMessage, getErrorMessage } from './errors'
+
 // MARK: Error helpers
 
 /**
@@ -123,54 +126,6 @@ export function toApiError(err: unknown, fallbackCode: ErrorCode = 'INTERNAL'): 
     code = 'UNREACHABLE'
   }
   return { code, message: msg }
-}
-
-/**
- * Translate an error code to a user-friendly Spanish message.
- *
- * Used by hooks and components to display localized, human-readable
- * error messages instead of raw backend messages or error codes.
- */
-export function toUserMessage(apiError: { code: ErrorCode; message?: string }): string {
-  switch (apiError.code) {
-    case 'INVALID_KEY':
-      return 'La clave de API no es válida. Verificá que esté correcta y no haya expirado.'
-    case 'RATE_LIMITED':
-      return 'Se excedió el límite de solicitudes. Esperá un momento antes de intentar de nuevo.'
-    case 'TOKEN_LIMIT':
-      return 'El contexto es demasiado largo para el modelo. Intentá con un nodo diferente.'
-    case 'UNREACHABLE':
-      return 'No se pudo conectar al proveedor de IA. Verificá tu conexión a internet.'
-    case 'PATH_NOT_FOUND':
-      return 'No se encontró el archivo o proyecto solicitado.'
-    case 'PROJECT_EXISTS':
-      return 'Ya existe un proyecto en esta ubicación.'
-    case 'ACCESS_DENIED':
-      return 'No tenés permisos para acceder a este recurso.'
-    case 'SCAN_TIMEOUT':
-      return 'El escaneo tardó demasiado y fue cancelado. Intentá con un proyecto más pequeño.'
-    case 'INTERNAL':
-    default:
-      return apiError.message || 'Ocurrió un error inesperado. Intentá de nuevo.'
-  }
-}
-
-/**
- * Extract a human-readable message from any thrown value.
- * Handles Error instances, plain objects, strings, and null/undefined.
- * Preserves `{ code, message }` shape for downstream consumers.
- */
-export function getErrorMessage(err: unknown): string {
-  if (err === null || err === undefined) return 'Unknown error'
-  if (typeof err === 'string') return err
-  if (typeof err === 'object' && 'message' in err) {
-    const msg = String((err as Record<string, unknown>).message)
-    if ('code' in err && typeof (err as Record<string, unknown>).code === 'string') {
-      return `${(err as Record<string, unknown>).code} — ${msg}`
-    }
-    return msg
-  }
-  return 'Unknown error'
 }
 
 // MARK: Project & Scanning ---
