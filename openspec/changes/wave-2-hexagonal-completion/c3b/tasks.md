@@ -58,7 +58,7 @@ WU-1 T4 backend · WU-2 F2 frontend · WU-3 spec + TE3 roundtrip
 - [x] 5.1 `cargo test` is green in `engine` + `src-tauri`; `src-tauri` `cargo fmt --check` + `clippy -- -D warnings` are clean after the C3b follow-up fix; `engine` still has unrelated pre-existing clippy debt outside C3b scope
 - [x] 5.2 `npm run lint && typecheck && test` — clean; `npm run check:arch` — no violations
 - [x] 5.3 `src-tauri/src/commands.rs` has no raw string error returns; remaining `AI not configured` text appears only inside `AppError::AIUnavailable(...)` constructors, which is the locked C3b shape
-- [ ] 5.4 Open PR with chain-context block (PR-12 → this PR)
+- [x] 5.4 PR #14 merged at `f9c71cb` (`feat/wave-2-c3b-error-boundary` → `main`)
 
 ## Blockers
 
@@ -75,4 +75,4 @@ WU-1 T4 backend · WU-2 F2 frontend · WU-3 spec + TE3 roundtrip
 
 ## Next step
 
-Open `feat/wave-2-c3b-error-boundary` from the C3a chain base, prepare the chain-context PR block (PR-12 → this PR), and carry forward the residual note that `engine` still has unrelated pre-existing clippy debt outside C3b scope.
+C3b is complete. Continue with C4 — Workspace port domain types — from updated `main` at `f9c71cb`.

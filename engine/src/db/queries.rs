@@ -1372,45 +1372,15 @@ impl<'pool> ProjectRepository<'pool> {
 }
 
 // ========================================================================
-// H3 Response Types (returned by PR8 commands)
+// H3 Response Types
+// Re-exported from models::workspace (AD-005 / C4 task 7.2).
 // ========================================================================
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutiveSummary {
-    pub workspace_id: String,
-    pub total_projects: i64,
-    pub total_files: i64,
-    pub avg_health_score: Option<f64>,
-    pub trend: String, // "up", "down", "stable"
-    pub top_hotspots: Vec<(String, f64)>,
-    pub generated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SnapshotDiff {
-    pub base_snapshot_id: String,
-    pub target_snapshot_id: String,
-    pub nodes_added: Vec<String>,
-    pub nodes_removed: Vec<String>,
-    pub nodes_modified: Vec<String>,
-    pub edges_added: Vec<String>,
-    pub edges_removed: Vec<String>,
-    pub coupling_delta: f64,
-    pub complexity_delta: f64,
-    pub cycles_delta: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct C4View {
-    pub level: u8,
-    pub systems: Option<Vec<String>>,
-    pub containers: Option<Vec<String>>,
-    pub warning: Option<String>,
-}
+pub use crate::models::{C4View, ExecutiveSummary, SnapshotDiff};
 
 // Minimal payload shape for snapshot diff comparison
+use serde::Deserialize;
+
 #[derive(Debug, Clone, Deserialize)]
 struct SnapshotPayloadRaw {
     nodes: Vec<NodeRaw>,

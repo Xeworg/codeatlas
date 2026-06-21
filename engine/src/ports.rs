@@ -313,70 +313,40 @@ impl GraphRepository for GraphRepositoryAdapter {
 /// All methods are implemented by `WorkspaceRepositoryAdapter` which delegates
 /// to `ProjectRepository`. This port enables full testability with mock doubles.
 pub trait WorkspaceRepository: Send + Sync {
-    /// Create a new workspace. Returns (id, name, created_at).
-    fn create_workspace(&self, name: &str) -> Result<(String, String, String)>;
+    /// Create a new workspace.
+    fn create_workspace(&self, name: &str) -> Result<crate::models::WorkspaceMeta>;
 
     /// List all workspaces ordered by creation date (newest first).
-    fn list_workspaces(&self) -> Result<Vec<(String, String, String)>>;
+    fn list_workspaces(&self) -> Result<Vec<crate::models::WorkspaceMeta>>;
 
     /// Attach a project to a workspace.
     fn attach_project_to_workspace(&self, workspace_id: &str, project_id: &str) -> Result<()>;
 
     /// List projects attached to a workspace.
-    fn list_workspace_projects(&self, workspace_id: &str) -> Result<Vec<(String, String)>>;
+    fn list_workspace_projects(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<crate::models::WorkspaceProjectMeta>>;
 
-    /// Create a snapshot. Returns (id, project_id, workspace_id, label, created_at, payload_json).
-    #[allow(clippy::type_complexity)]
+    /// Create a snapshot.
     fn create_snapshot(
         &self,
         project_id: &str,
         label: &str,
         workspace_id: Option<&str>,
-    ) -> Result<(
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-    )>;
+    ) -> Result<crate::models::SnapshotMeta>;
 
     /// Get a snapshot by ID.
-    #[allow(clippy::type_complexity)]
-    fn get_snapshot(
-        &self,
-        snapshot_id: &str,
-    ) -> Result<
-        Option<(
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-        )>,
-    >;
+    fn get_snapshot(&self, snapshot_id: &str) -> Result<Option<crate::models::SnapshotMeta>>;
 
     /// List snapshots for a project, optionally filtered by workspace.
-    #[allow(clippy::type_complexity)]
     fn list_snapshots(
         &self,
         project_id: &str,
         workspace_id: Option<&str>,
-    ) -> Result<
-        Vec<(
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-        )>,
-    >;
+    ) -> Result<Vec<crate::models::SnapshotMeta>>;
 
     /// Add a comment/annotation to a node.
-    /// Returns (id, project_id, node_id, author, kind, text, created_at).
-    #[allow(clippy::type_complexity)]
     fn add_comment(
         &self,
         project_id: &str,
@@ -384,40 +354,38 @@ pub trait WorkspaceRepository: Send + Sync {
         author: &str,
         text: &str,
         kind: Option<&str>,
-    ) -> Result<(String, String, String, String, String, String, String)>;
+    ) -> Result<crate::models::CommentMeta>;
 
     /// List comments for a project, optionally filtered by node.
-    #[allow(clippy::type_complexity)]
     fn list_comments(
         &self,
         project_id: &str,
         node_id: Option<&str>,
-    ) -> Result<Vec<(String, String, String, String, String, String, String)>>;
+    ) -> Result<Vec<crate::models::CommentMeta>>;
 
     /// Get health timeline for a project within a date range.
-    #[allow(clippy::type_complexity)]
     fn get_health_timeline(
         &self,
         project_id: &str,
         from: &str,
         to: &str,
-    ) -> Result<Vec<(String, String, f64, f64, f64, i64, i64)>>;
+    ) -> Result<Vec<crate::models::HealthRecord>>;
 
     /// Compute executive summary for a workspace.
     fn compute_executive_summary(
         &self,
         workspace_id: &str,
-    ) -> Result<crate::db::queries::ExecutiveSummary>;
+    ) -> Result<crate::models::ExecutiveSummary>;
 
     /// Compare two snapshots and return diff.
     fn compare_snapshots(
         &self,
         base_snapshot_id: &str,
         target_snapshot_id: &str,
-    ) -> Result<crate::db::queries::SnapshotDiff>;
+    ) -> Result<crate::models::SnapshotDiff>;
 
     /// Get C4 view for a project at a given level.
-    fn get_c4_view(&self, project_id: &str, level: u8) -> Result<crate::db::queries::C4View>;
+    fn get_c4_view(&self, project_id: &str, level: u8) -> Result<crate::models::C4View>;
 }
 
 /// Adapter that implements `WorkspaceRepository` by delegating to `ProjectRepository`.
@@ -449,15 +417,29 @@ impl WorkspaceRepositoryAdapter {
 }
 
 impl WorkspaceRepository for WorkspaceRepositoryAdapter {
-    fn create_workspace(&self, name: &str) -> Result<(String, String, String)> {
+    fn create_workspace(&self, name: &str) -> Result<crate::models::WorkspaceMeta> {
         self.inner
             .create_workspace(name)
+            .map(|(id, name, created_at)| crate::models::WorkspaceMeta {
+                id,
+                name,
+                created_at,
+            })
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
-    fn list_workspaces(&self) -> Result<Vec<(String, String, String)>> {
+    fn list_workspaces(&self) -> Result<Vec<crate::models::WorkspaceMeta>> {
         self.inner
             .list_workspaces()
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|(id, name, created_at)| crate::models::WorkspaceMeta {
+                        id,
+                        name,
+                        created_at,
+                    })
+                    .collect()
+            })
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
@@ -467,9 +449,22 @@ impl WorkspaceRepository for WorkspaceRepositoryAdapter {
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
-    fn list_workspace_projects(&self, workspace_id: &str) -> Result<Vec<(String, String)>> {
+    fn list_workspace_projects(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<crate::models::WorkspaceProjectMeta>> {
         self.inner
             .list_workspace_projects(workspace_id)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(
+                        |(workspace_id, project_id)| crate::models::WorkspaceProjectMeta {
+                            workspace_id,
+                            project_id,
+                        },
+                    )
+                    .collect()
+            })
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
@@ -478,34 +473,41 @@ impl WorkspaceRepository for WorkspaceRepositoryAdapter {
         project_id: &str,
         label: &str,
         workspace_id: Option<&str>,
-    ) -> Result<(
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-    )> {
+    ) -> Result<crate::models::SnapshotMeta> {
         self.inner
             .create_snapshot(project_id, label, workspace_id)
+            .map(
+                |(id, project_id, workspace_id, label, created_at, payload_json)| {
+                    crate::models::SnapshotMeta {
+                        id,
+                        project_id,
+                        workspace_id,
+                        label,
+                        created_at,
+                        payload_json,
+                    }
+                },
+            )
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
-    fn get_snapshot(
-        &self,
-        snapshot_id: &str,
-    ) -> Result<
-        Option<(
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-        )>,
-    > {
+    fn get_snapshot(&self, snapshot_id: &str) -> Result<Option<crate::models::SnapshotMeta>> {
         self.inner
             .get_snapshot(snapshot_id)
+            .map(|opt| {
+                opt.map(
+                    |(id, project_id, workspace_id, label, created_at, payload_json)| {
+                        crate::models::SnapshotMeta {
+                            id,
+                            project_id,
+                            workspace_id,
+                            label,
+                            created_at,
+                            payload_json,
+                        }
+                    },
+                )
+            })
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
@@ -513,22 +515,28 @@ impl WorkspaceRepository for WorkspaceRepositoryAdapter {
         &self,
         project_id: &str,
         workspace_id: Option<&str>,
-    ) -> Result<
-        Vec<(
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-        )>,
-    > {
+    ) -> Result<Vec<crate::models::SnapshotMeta>> {
         self.inner
             .list_snapshots(project_id, workspace_id)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(
+                        |(id, project_id, workspace_id, label, created_at, payload_json)| {
+                            crate::models::SnapshotMeta {
+                                id,
+                                project_id,
+                                workspace_id,
+                                label,
+                                created_at,
+                                payload_json,
+                            }
+                        },
+                    )
+                    .collect()
+            })
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
-    #[allow(clippy::type_complexity)]
     fn add_comment(
         &self,
         project_id: &str,
@@ -536,39 +544,90 @@ impl WorkspaceRepository for WorkspaceRepositoryAdapter {
         author: &str,
         text: &str,
         kind: Option<&str>,
-    ) -> Result<(String, String, String, String, String, String, String)> {
+    ) -> Result<crate::models::CommentMeta> {
         self.inner
             .add_comment(project_id, node_id, author, text, kind)
+            .map(
+                |(id, project_id, node_id, author, kind, text, created_at)| {
+                    crate::models::CommentMeta {
+                        id,
+                        project_id,
+                        node_id,
+                        author,
+                        kind,
+                        text,
+                        created_at,
+                    }
+                },
+            )
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
-    #[allow(clippy::type_complexity)]
     fn list_comments(
         &self,
         project_id: &str,
         node_id: Option<&str>,
-    ) -> Result<Vec<(String, String, String, String, String, String, String)>> {
+    ) -> Result<Vec<crate::models::CommentMeta>> {
         self.inner
             .list_comments(project_id, node_id)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(
+                        |(id, project_id, node_id, author, kind, text, created_at)| {
+                            crate::models::CommentMeta {
+                                id,
+                                project_id,
+                                node_id,
+                                author,
+                                kind,
+                                text,
+                                created_at,
+                            }
+                        },
+                    )
+                    .collect()
+            })
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
-    #[allow(clippy::type_complexity)]
     fn get_health_timeline(
         &self,
         project_id: &str,
         from: &str,
         to: &str,
-    ) -> Result<Vec<(String, String, f64, f64, f64, i64, i64)>> {
+    ) -> Result<Vec<crate::models::HealthRecord>> {
         self.inner
             .get_health_timeline(project_id, from, to)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(
+                        |(
+                            id,
+                            recorded_at,
+                            overall_score,
+                            coupling_score,
+                            complexity_score,
+                            cycle_count,
+                            hotspot_count,
+                        )| crate::models::HealthRecord {
+                            id,
+                            recorded_at,
+                            overall_score,
+                            coupling_score,
+                            complexity_score,
+                            cycle_count,
+                            hotspot_count,
+                        },
+                    )
+                    .collect()
+            })
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
     fn compute_executive_summary(
         &self,
         workspace_id: &str,
-    ) -> Result<crate::db::queries::ExecutiveSummary> {
+    ) -> Result<crate::models::ExecutiveSummary> {
         self.inner
             .compute_executive_summary(workspace_id)
             .map_err(|e| crate::AppError::Database(e.to_string()))
@@ -578,13 +637,13 @@ impl WorkspaceRepository for WorkspaceRepositoryAdapter {
         &self,
         base_snapshot_id: &str,
         target_snapshot_id: &str,
-    ) -> Result<crate::db::queries::SnapshotDiff> {
+    ) -> Result<crate::models::SnapshotDiff> {
         self.inner
             .compare_snapshots(base_snapshot_id, target_snapshot_id)
             .map_err(|e| crate::AppError::Database(e.to_string()))
     }
 
-    fn get_c4_view(&self, project_id: &str, level: u8) -> Result<crate::db::queries::C4View> {
+    fn get_c4_view(&self, project_id: &str, level: u8) -> Result<crate::models::C4View> {
         self.inner
             .get_c4_view(project_id, level)
             .map_err(|e| crate::AppError::Database(e.to_string()))
@@ -965,11 +1024,11 @@ impl AnalysisDataSource for std::sync::Arc<dyn AnalysisDataSource> {
 }
 
 impl WorkspaceRepository for std::sync::Arc<dyn WorkspaceRepository> {
-    fn create_workspace(&self, name: &str) -> Result<(String, String, String)> {
+    fn create_workspace(&self, name: &str) -> Result<crate::models::WorkspaceMeta> {
         (**self).create_workspace(name)
     }
 
-    fn list_workspaces(&self) -> Result<Vec<(String, String, String)>> {
+    fn list_workspaces(&self) -> Result<Vec<crate::models::WorkspaceMeta>> {
         (**self).list_workspaces()
     }
 
@@ -977,63 +1036,34 @@ impl WorkspaceRepository for std::sync::Arc<dyn WorkspaceRepository> {
         (**self).attach_project_to_workspace(workspace_id, project_id)
     }
 
-    fn list_workspace_projects(&self, workspace_id: &str) -> Result<Vec<(String, String)>> {
+    fn list_workspace_projects(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<crate::models::WorkspaceProjectMeta>> {
         (**self).list_workspace_projects(workspace_id)
     }
 
-    #[allow(clippy::type_complexity)]
     fn create_snapshot(
         &self,
         project_id: &str,
         label: &str,
         workspace_id: Option<&str>,
-    ) -> Result<(
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-    )> {
+    ) -> Result<crate::models::SnapshotMeta> {
         (**self).create_snapshot(project_id, label, workspace_id)
     }
 
-    #[allow(clippy::type_complexity)]
-    fn get_snapshot(
-        &self,
-        snapshot_id: &str,
-    ) -> Result<
-        Option<(
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-        )>,
-    > {
+    fn get_snapshot(&self, snapshot_id: &str) -> Result<Option<crate::models::SnapshotMeta>> {
         (**self).get_snapshot(snapshot_id)
     }
 
-    #[allow(clippy::type_complexity)]
     fn list_snapshots(
         &self,
         project_id: &str,
         workspace_id: Option<&str>,
-    ) -> Result<
-        Vec<(
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-        )>,
-    > {
+    ) -> Result<Vec<crate::models::SnapshotMeta>> {
         (**self).list_snapshots(project_id, workspace_id)
     }
 
-    #[allow(clippy::type_complexity)]
     fn add_comment(
         &self,
         project_id: &str,
@@ -1041,16 +1071,15 @@ impl WorkspaceRepository for std::sync::Arc<dyn WorkspaceRepository> {
         author: &str,
         text: &str,
         kind: Option<&str>,
-    ) -> Result<(String, String, String, String, String, String, String)> {
+    ) -> Result<crate::models::CommentMeta> {
         (**self).add_comment(project_id, node_id, author, text, kind)
     }
 
-    #[allow(clippy::type_complexity)]
     fn list_comments(
         &self,
         project_id: &str,
         node_id: Option<&str>,
-    ) -> Result<Vec<(String, String, String, String, String, String, String)>> {
+    ) -> Result<Vec<crate::models::CommentMeta>> {
         (**self).list_comments(project_id, node_id)
     }
 
@@ -1059,14 +1088,14 @@ impl WorkspaceRepository for std::sync::Arc<dyn WorkspaceRepository> {
         project_id: &str,
         from: &str,
         to: &str,
-    ) -> Result<Vec<(String, String, f64, f64, f64, i64, i64)>> {
+    ) -> Result<Vec<crate::models::HealthRecord>> {
         (**self).get_health_timeline(project_id, from, to)
     }
 
     fn compute_executive_summary(
         &self,
         workspace_id: &str,
-    ) -> Result<crate::db::queries::ExecutiveSummary> {
+    ) -> Result<crate::models::ExecutiveSummary> {
         (**self).compute_executive_summary(workspace_id)
     }
 
@@ -1074,11 +1103,11 @@ impl WorkspaceRepository for std::sync::Arc<dyn WorkspaceRepository> {
         &self,
         base_snapshot_id: &str,
         target_snapshot_id: &str,
-    ) -> Result<crate::db::queries::SnapshotDiff> {
+    ) -> Result<crate::models::SnapshotDiff> {
         (**self).compare_snapshots(base_snapshot_id, target_snapshot_id)
     }
 
-    fn get_c4_view(&self, project_id: &str, level: u8) -> Result<crate::db::queries::C4View> {
+    fn get_c4_view(&self, project_id: &str, level: u8) -> Result<crate::models::C4View> {
         (**self).get_c4_view(project_id, level)
     }
 }
