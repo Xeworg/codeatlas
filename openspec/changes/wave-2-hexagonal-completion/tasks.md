@@ -26,7 +26,7 @@ Chain strategy: feature-branch-chain
 | C1  | Foundations + 3 dead commands | 250-350   | 🟢   | no             | ✅ PR #9 (`be33134`)  |
 | C2  | Clock + IdGen + Stopwatch     | 450-600   | 🟡   | no             | ✅ PR #10 (`fe26f70`) |
 | C3a | AI presentation extraction    | 400-550   | 🔴   | yes            | ✅ PR #12 (`a19dc32`) |
-| C3b | Error-boundary cleanup        | 250-400   | 🟡   | no             | 📍 In progress        |
+| C3b | Error-boundary cleanup        | 250-400   | 🟡   | no             | ✅ PR #14 (`f9c71cb`) |
 | C4  | Workspace port domain types   | 800-1000  | 🟡   | yes            | pending               |
 | C5  | Service-level ports           | 500-700   | 🟡   | yes            | pending               |
 | C6  | Cleanup + arch-guard          | 600-800   | 🟢   | no             | pending               |
@@ -84,7 +84,7 @@ Chain strategy: feature-branch-chain
 - [x] 5.16 `npm run lint && typecheck && test && check:arch` clean
 - [x] 5.17 `src-tauri/src/commands.rs` has no raw string error returns; remaining `AI not configured` text appears only inside `AppError::AIUnavailable(...)` constructors, which is the locked C3b shape
 - [x] 5.18 Frontend misconfiguration UX fix: `AI_UNAVAILABLE` with reason "AI not configured" remains `UNREACHABLE` in `BACKEND_TO_FRONTEND_CODE`; `toUserMessage` special-cases it to show the setup/configuration Spanish message (4R pre-PR fix)
-- [ ] 5.19 Open PR `feat/wave-2-c3b-error-boundary` (base `608a847`, chain-context block)
+- [x] 5.19 PR #14 merged at `f9c71cb` (feat/wave-2-c3b-error-boundary → main)
 
 ## Phase 6: Follow-up — Judgment Day Round 2
 
@@ -138,4 +138,4 @@ Chain strategy: feature-branch-chain
 
 ## Next step
 
-Abrir `feat/wave-2-c3b-error-boundary` desde la base encadenada de C3a, preparar el chain-context block (PR-12 → este PR), y dejar explícito que `engine` mantiene deuda previa de clippy fuera del scope de C3b. Después de eso, seguir con C4.
+C3b (PR #14) merged. Proceed to **Phase 7: C4 — Workspace port domain types** (Phase 7, tasks 7.1–7.3).
