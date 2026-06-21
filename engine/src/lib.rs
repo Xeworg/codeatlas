@@ -13,6 +13,8 @@ pub mod ports;
 pub mod scanner;
 pub mod services;
 
+// C4View, ExecutiveSummary, SnapshotDiff re-exported from db::queries
+// which now re-exports them from models::workspace (AD-005 task 7.2).
 pub use db::queries::{C4View, ExecutiveSummary, SnapshotDiff};
 pub use models::{FileInfo, GraphData, NodeType, ScanResult, ScanStatus};
 pub use ports::hexagonal::{

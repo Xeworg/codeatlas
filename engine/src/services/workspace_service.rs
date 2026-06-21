@@ -16,7 +16,10 @@
 //!       -> ProjectRepository (infrastructure adapter)
 //! ```
 
-use crate::db::queries::{C4View, ExecutiveSummary, SnapshotDiff};
+use crate::models::{
+    C4View, CommentMeta, ExecutiveSummary, HealthRecord, SnapshotDiff, SnapshotMeta, WorkspaceMeta,
+    WorkspaceProjectMeta,
+};
 use crate::ports::WorkspaceRepository;
 use crate::Result;
 
@@ -158,27 +161,25 @@ impl<'pool, W> WorkspaceService<'pool, W> {
 impl<'pool, W: WorkspaceRepository> WorkspaceService<'pool, W> {
     /// Create a new workspace.
     pub fn create_workspace(&self, name: &str) -> Result<WorkspaceResponse> {
-        let (id, name_out, created_at) = self.workspace_repo.create_workspace(name)?;
+        let meta: WorkspaceMeta = self.workspace_repo.create_workspace(name)?;
         Ok(WorkspaceResponse {
-            id,
-            name: name_out,
-            created_at,
+            id: meta.id,
+            name: meta.name,
+            created_at: meta.created_at,
         })
     }
 
     /// List all workspaces ordered by creation date (newest first).
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceResponse>> {
-        let workspaces: Vec<WorkspaceResponse> = self
-            .workspace_repo
-            .list_workspaces()?
+        let workspaces: Vec<WorkspaceMeta> = self.workspace_repo.list_workspaces()?;
+        Ok(workspaces
             .into_iter()
-            .map(|(id, name, created_at)| WorkspaceResponse {
-                id,
-                name,
-                created_at,
+            .map(|meta| WorkspaceResponse {
+                id: meta.id,
+                name: meta.name,
+                created_at: meta.created_at,
             })
-            .collect();
-        Ok(workspaces)
+            .collect())
     }
 
     /// Attach a project to a workspace.
@@ -192,13 +193,13 @@ impl<'pool, W: WorkspaceRepository> WorkspaceService<'pool, W> {
         &self,
         workspace_id: &str,
     ) -> Result<Vec<WorkspaceProjectResponse>> {
-        Ok(self
-            .workspace_repo
-            .list_workspace_projects(workspace_id)?
+        let metas: Vec<WorkspaceProjectMeta> =
+            self.workspace_repo.list_workspace_projects(workspace_id)?;
+        Ok(metas
             .into_iter()
-            .map(|(workspace_id, project_id)| WorkspaceProjectResponse {
-                workspace_id,
-                project_id,
+            .map(|meta| WorkspaceProjectResponse {
+                workspace_id: meta.workspace_id,
+                project_id: meta.project_id,
             })
             .collect())
     }
@@ -210,31 +211,32 @@ impl<'pool, W: WorkspaceRepository> WorkspaceService<'pool, W> {
         label: &str,
         workspace_id: Option<&str>,
     ) -> Result<SnapshotResponse> {
-        let (id, project_id_out, workspace_id_out, label_out, created_at, payload_json) = self
-            .workspace_repo
-            .create_snapshot(project_id, label, workspace_id)?;
+        let meta: SnapshotMeta =
+            self.workspace_repo
+                .create_snapshot(project_id, label, workspace_id)?;
         Ok(SnapshotResponse {
-            id,
-            project_id: project_id_out,
-            workspace_id: workspace_id_out,
-            label: label_out,
-            created_at,
-            payload_json,
+            id: meta.id,
+            project_id: meta.project_id,
+            workspace_id: meta.workspace_id,
+            label: meta.label,
+            created_at: meta.created_at,
+            payload_json: meta.payload_json,
         })
     }
 
     /// Get a snapshot by ID.
     pub fn get_snapshot(&self, snapshot_id: &str) -> Result<Option<SnapshotResponse>> {
-        Ok(self.workspace_repo.get_snapshot(snapshot_id)?.map(
-            |(id, project_id, workspace_id, label, created_at, payload_json)| SnapshotResponse {
-                id,
-                project_id,
-                workspace_id,
-                label,
-                created_at,
-                payload_json,
-            },
-        ))
+        Ok(self
+            .workspace_repo
+            .get_snapshot(snapshot_id)?
+            .map(|meta| SnapshotResponse {
+                id: meta.id,
+                project_id: meta.project_id,
+                workspace_id: meta.workspace_id,
+                label: meta.label,
+                created_at: meta.created_at,
+                payload_json: meta.payload_json,
+            }))
     }
 
     /// List snapshots for a project, optionally filtered by workspace.
@@ -243,32 +245,23 @@ impl<'pool, W: WorkspaceRepository> WorkspaceService<'pool, W> {
         project_id: &str,
         workspace_id: Option<&str>,
     ) -> Result<Vec<SnapshotResponse>> {
-        Ok(self
+        let metas: Vec<SnapshotMeta> = self
             .workspace_repo
-            .list_snapshots(project_id, workspace_id)?
+            .list_snapshots(project_id, workspace_id)?;
+        Ok(metas
             .into_iter()
-            .map(
-                |(id, project_id, workspace_id, label, created_at, payload_json): (
-                    String,
-                    String,
-                    Option<String>,
-                    String,
-                    String,
-                    Option<String>,
-                )| SnapshotResponse {
-                    id,
-                    project_id,
-                    workspace_id,
-                    label,
-                    created_at,
-                    payload_json,
-                },
-            )
+            .map(|meta| SnapshotResponse {
+                id: meta.id,
+                project_id: meta.project_id,
+                workspace_id: meta.workspace_id,
+                label: meta.label,
+                created_at: meta.created_at,
+                payload_json: meta.payload_json,
+            })
             .collect())
     }
 
     /// Add a comment/annotation to a node.
-    #[allow(clippy::type_complexity)]
     pub fn add_comment(
         &self,
         project_id: &str,
@@ -277,87 +270,63 @@ impl<'pool, W: WorkspaceRepository> WorkspaceService<'pool, W> {
         text: &str,
         kind: Option<&str>,
     ) -> Result<AnnotationResponse> {
-        let (id, project_id_out, node_id_out, author_out, kind_out, text_out, created_at) = self
+        let meta: CommentMeta = self
             .workspace_repo
             .add_comment(project_id, node_id, author, text, kind)?;
         Ok(AnnotationResponse {
-            id,
-            project_id: project_id_out,
-            node_id: node_id_out,
-            author: author_out,
-            kind: kind_out,
-            text: text_out,
-            created_at,
+            id: meta.id,
+            project_id: meta.project_id,
+            node_id: meta.node_id,
+            author: meta.author,
+            kind: meta.kind,
+            text: meta.text,
+            created_at: meta.created_at,
         })
     }
 
     /// List comments for a project, optionally filtered by node.
-    #[allow(clippy::type_complexity)]
     pub fn list_comments(
         &self,
         project_id: &str,
         node_id: Option<&str>,
     ) -> Result<Vec<AnnotationResponse>> {
-        Ok(self
-            .workspace_repo
-            .list_comments(project_id, node_id)?
+        let metas: Vec<CommentMeta> = self.workspace_repo.list_comments(project_id, node_id)?;
+        Ok(metas
             .into_iter()
-            .map(
-                |(id, project_id, node_id, author, kind, text, created_at): (
-                    String,
-                    String,
-                    String,
-                    String,
-                    String,
-                    String,
-                    String,
-                )| AnnotationResponse {
-                    id,
-                    project_id,
-                    node_id,
-                    author,
-                    kind,
-                    text,
-                    created_at,
-                },
-            )
+            .map(|meta| AnnotationResponse {
+                id: meta.id,
+                project_id: meta.project_id,
+                node_id: meta.node_id,
+                author: meta.author,
+                kind: meta.kind,
+                text: meta.text,
+                created_at: meta.created_at,
+            })
             .collect())
     }
 
     /// Get health timeline for a project within a date range.
-    #[allow(clippy::type_complexity)]
     pub fn get_health_timeline(
         &self,
         project_id: &str,
         from: &str,
         to: &str,
     ) -> Result<HealthTimelineResponse> {
+        let records: Vec<HealthRecord> = self
+            .workspace_repo
+            .get_health_timeline(project_id, from, to)?;
         Ok(HealthTimelineResponse {
-            records: self
-                .workspace_repo
-                .get_health_timeline(project_id, from, to)?
+            records: records
                 .into_iter()
-                .map(
-                    |(
-                        id,
-                        recorded_at,
-                        overall_score,
-                        coupling_score,
-                        complexity_score,
-                        cycle_count,
-                        hotspot_count,
-                    ): (String, String, f64, f64, f64, i64, i64)| {
-                        HealthRecordResponse {
-                            id,
-                            recorded_at,
-                            overall_score,
-                            coupling_score,
-                            complexity_score,
-                            cycle_count,
-                            hotspot_count,
-                        }
-                    },
-                )
+                .map(|r| HealthRecordResponse {
+                    id: r.id,
+                    recorded_at: r.recorded_at,
+                    overall_score: r.overall_score,
+                    coupling_score: r.coupling_score,
+                    complexity_score: r.complexity_score,
+                    cycle_count: r.cycle_count,
+                    hotspot_count: r.hotspot_count,
+                })
                 .collect(),
             project_id: project_id.to_string(),
             from: from.to_string(),
@@ -379,7 +348,7 @@ impl<'pool, W: WorkspaceRepository> WorkspaceService<'pool, W> {
             top_hotspots: s
                 .top_hotspots
                 .into_iter()
-                .map(|(node_id, coupling_score): (String, f64)| HotspotItem {
+                .map(|(node_id, coupling_score)| HotspotItem {
                     node_id,
                     coupling_score,
                 })

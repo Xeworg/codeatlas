@@ -17,6 +17,9 @@
 //! - Health timeline and executive summary
 //! - Snapshot diff and C4 view
 
+use engine::models::{
+    CommentMeta, HealthRecord, SnapshotMeta, WorkspaceMeta, WorkspaceProjectMeta,
+};
 use engine::ports::WorkspaceRepository;
 use std::sync::Mutex;
 
@@ -29,23 +32,14 @@ use std::sync::Mutex;
 /// This mock records all calls and returns deterministic data. It proves that
 /// WorkspaceService delegates to the port abstraction rather than bypassing it.
 ///
-/// The mock implements ALL 10 methods of WorkspaceRepository so it is a valid
+/// The mock implements ALL 12 methods of WorkspaceRepository so it is a valid
 /// test double for the full service surface.
 struct RecordingWorkspaceRepo {
-    pub workspaces: Mutex<Vec<(String, String, String)>>,
-    pub workspace_projects: Mutex<Vec<(String, String)>>,
-    pub snapshots: Mutex<
-        Vec<(
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-        )>,
-    >,
-    pub comments: Mutex<Vec<(String, String, String, String, String, String, String)>>,
-    pub health_timelines: Mutex<Vec<(String, String, f64, f64, f64, i64, i64)>>,
+    pub workspaces: Mutex<Vec<WorkspaceMeta>>,
+    pub workspace_projects: Mutex<Vec<WorkspaceProjectMeta>>,
+    pub snapshots: Mutex<Vec<SnapshotMeta>>,
+    pub comments: Mutex<Vec<CommentMeta>>,
+    pub health_timelines: Mutex<Vec<HealthRecord>>,
 }
 
 impl RecordingWorkspaceRepo {
@@ -61,17 +55,19 @@ impl RecordingWorkspaceRepo {
 }
 
 impl WorkspaceRepository for RecordingWorkspaceRepo {
-    fn create_workspace(&self, name: &str) -> engine::Result<(String, String, String)> {
+    fn create_workspace(&self, name: &str) -> engine::Result<WorkspaceMeta> {
         let id = format!("ws-{}", uuid::Uuid::new_v4());
         let ts = chrono::Utc::now().to_rfc3339();
-        self.workspaces
-            .lock()
-            .unwrap()
-            .push((id.clone(), name.to_string(), ts.clone()));
-        Ok((id, name.to_string(), ts))
+        let meta = WorkspaceMeta {
+            id: id.clone(),
+            name: name.to_string(),
+            created_at: ts.clone(),
+        };
+        self.workspaces.lock().unwrap().push(meta.clone());
+        Ok(meta)
     }
 
-    fn list_workspaces(&self) -> engine::Result<Vec<(String, String, String)>> {
+    fn list_workspaces(&self) -> engine::Result<Vec<WorkspaceMeta>> {
         Ok(self.workspaces.lock().unwrap().clone())
     }
 
@@ -83,89 +79,63 @@ impl WorkspaceRepository for RecordingWorkspaceRepo {
         self.workspace_projects
             .lock()
             .unwrap()
-            .push((workspace_id.to_string(), project_id.to_string()));
+            .push(WorkspaceProjectMeta {
+                workspace_id: workspace_id.to_string(),
+                project_id: project_id.to_string(),
+            });
         Ok(())
     }
 
-    fn list_workspace_projects(&self, workspace_id: &str) -> engine::Result<Vec<(String, String)>> {
+    fn list_workspace_projects(
+        &self,
+        workspace_id: &str,
+    ) -> engine::Result<Vec<WorkspaceProjectMeta>> {
         let all = self.workspace_projects.lock().unwrap().clone();
         Ok(all
             .into_iter()
-            .filter(|(ws, _)| ws == workspace_id)
+            .filter(|meta| meta.workspace_id == workspace_id)
             .collect())
     }
 
-    #[allow(clippy::type_complexity)]
     fn create_snapshot(
         &self,
         project_id: &str,
         label: &str,
         workspace_id: Option<&str>,
-    ) -> engine::Result<(
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-    )> {
+    ) -> engine::Result<SnapshotMeta> {
         let id = format!("snap-{}", uuid::Uuid::new_v4());
         let ts = chrono::Utc::now().to_rfc3339();
-        let result = (
-            id.clone(),
-            project_id.to_string(),
-            workspace_id.map(|s| s.to_string()),
-            label.to_string(),
-            ts,
-            None,
-        );
-        self.snapshots.lock().unwrap().push(result.clone());
-        Ok(result)
+        let meta = SnapshotMeta {
+            id: id.clone(),
+            project_id: project_id.to_string(),
+            workspace_id: workspace_id.map(String::from),
+            label: label.to_string(),
+            created_at: ts,
+            payload_json: None,
+        };
+        self.snapshots.lock().unwrap().push(meta.clone());
+        Ok(meta)
     }
 
-    #[allow(clippy::type_complexity)]
-    fn get_snapshot(
-        &self,
-        snapshot_id: &str,
-    ) -> engine::Result<
-        Option<(
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-        )>,
-    > {
+    fn get_snapshot(&self, snapshot_id: &str) -> engine::Result<Option<SnapshotMeta>> {
         let all = self.snapshots.lock().unwrap().clone();
-        Ok(all
-            .into_iter()
-            .find(|(id, _, _, _, _, _)| id == snapshot_id))
+        Ok(all.into_iter().find(|m| m.id == snapshot_id))
     }
 
-    #[allow(clippy::type_complexity)]
     fn list_snapshots(
         &self,
         project_id: &str,
         workspace_id: Option<&str>,
-    ) -> engine::Result<
-        Vec<(
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-        )>,
-    > {
+    ) -> engine::Result<Vec<SnapshotMeta>> {
         let all = self.snapshots.lock().unwrap().clone();
         Ok(all
             .into_iter()
-            .filter(|(_, pid, wid, _, _, _)| pid == project_id && wid.as_deref() == workspace_id)
+            .filter(|meta| {
+                meta.project_id == project_id && meta.workspace_id.as_deref() == workspace_id
+            })
             .collect())
     }
 
-    #[allow(clippy::type_complexity)]
     fn add_comment(
         &self,
         project_id: &str,
@@ -173,51 +143,49 @@ impl WorkspaceRepository for RecordingWorkspaceRepo {
         author: &str,
         text: &str,
         kind: Option<&str>,
-    ) -> engine::Result<(String, String, String, String, String, String, String)> {
+    ) -> engine::Result<CommentMeta> {
         let id = format!("comment-{}", uuid::Uuid::new_v4());
         let ts = chrono::Utc::now().to_rfc3339();
-        let result = (
-            id.clone(),
-            project_id.to_string(),
-            node_id.to_string(),
-            author.to_string(),
-            kind.unwrap_or("comment").to_string(),
-            text.to_string(),
-            ts,
-        );
-        self.comments.lock().unwrap().push(result.clone());
-        Ok(result)
+        let meta = CommentMeta {
+            id: id.clone(),
+            project_id: project_id.to_string(),
+            node_id: node_id.to_string(),
+            author: author.to_string(),
+            kind: kind.unwrap_or("comment").to_string(),
+            text: text.to_string(),
+            created_at: ts,
+        };
+        self.comments.lock().unwrap().push(meta.clone());
+        Ok(meta)
     }
 
-    #[allow(clippy::type_complexity)]
     fn list_comments(
         &self,
         project_id: &str,
         node_id: Option<&str>,
-    ) -> engine::Result<Vec<(String, String, String, String, String, String, String)>> {
+    ) -> engine::Result<Vec<CommentMeta>> {
         let all = self.comments.lock().unwrap().clone();
         Ok(all
             .into_iter()
-            .filter(|(pid, nid, _, _, _, _, _)| {
-                pid == project_id && node_id.map_or(true, |n| nid == n)
+            .filter(|meta| {
+                meta.project_id == project_id && node_id.map_or(true, |n| meta.node_id == n)
             })
             .collect())
     }
 
-    #[allow(clippy::type_complexity)]
     fn get_health_timeline(
         &self,
         project_id: &str,
         _from: &str,
         _to: &str,
-    ) -> engine::Result<Vec<(String, String, f64, f64, f64, i64, i64)>> {
+    ) -> engine::Result<Vec<HealthRecord>> {
         // Return empty timeline for mock — real tests use DB adapter
         Ok(self
             .health_timelines
             .lock()
             .unwrap()
             .iter()
-            .filter(|(pid, _, _, _, _, _, _)| pid == project_id)
+            .filter(|r| r.id == project_id)
             .cloned()
             .collect())
     }
@@ -225,8 +193,8 @@ impl WorkspaceRepository for RecordingWorkspaceRepo {
     fn compute_executive_summary(
         &self,
         workspace_id: &str,
-    ) -> engine::Result<engine::db::queries::ExecutiveSummary> {
-        Ok(engine::db::queries::ExecutiveSummary {
+    ) -> engine::Result<engine::models::ExecutiveSummary> {
+        Ok(engine::models::ExecutiveSummary {
             workspace_id: workspace_id.to_string(),
             total_projects: 0,
             total_files: 0,
@@ -241,8 +209,8 @@ impl WorkspaceRepository for RecordingWorkspaceRepo {
         &self,
         base_snapshot_id: &str,
         target_snapshot_id: &str,
-    ) -> engine::Result<engine::db::queries::SnapshotDiff> {
-        Ok(engine::db::queries::SnapshotDiff {
+    ) -> engine::Result<engine::models::SnapshotDiff> {
+        Ok(engine::models::SnapshotDiff {
             base_snapshot_id: base_snapshot_id.to_string(),
             target_snapshot_id: target_snapshot_id.to_string(),
             nodes_added: vec![],
@@ -256,12 +224,8 @@ impl WorkspaceRepository for RecordingWorkspaceRepo {
         })
     }
 
-    fn get_c4_view(
-        &self,
-        project_id: &str,
-        level: u8,
-    ) -> engine::Result<engine::db::queries::C4View> {
-        Ok(engine::db::queries::C4View {
+    fn get_c4_view(&self, project_id: &str, level: u8) -> engine::Result<engine::models::C4View> {
+        Ok(engine::models::C4View {
             level,
             systems: Some(vec![format!("sys-{}", project_id)]),
             containers: Some(vec![format!("container-{}", project_id)]),

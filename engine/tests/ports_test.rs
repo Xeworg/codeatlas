@@ -135,14 +135,14 @@ fn workspace_repository_create_and_list() {
     pool.init_schema().unwrap();
     let repo = WorkspaceRepositoryAdapter::new(&pool);
 
-    let (id, name, created) = repo.create_workspace("PortWorkspace").unwrap();
-    assert!(!id.is_empty());
-    assert_eq!(name, "PortWorkspace");
-    assert!(!created.is_empty());
+    let meta = repo.create_workspace("PortWorkspace").unwrap();
+    assert!(!meta.id.is_empty());
+    assert_eq!(meta.name, "PortWorkspace");
+    assert!(!meta.created_at.is_empty());
 
     let workspaces = repo.list_workspaces().unwrap();
     assert_eq!(workspaces.len(), 1);
-    assert_eq!(workspaces[0].1, "PortWorkspace");
+    assert_eq!(workspaces[0].name, "PortWorkspace");
 }
 
 /// T5.8 — Verify AppStatePort can read and write scan status.
