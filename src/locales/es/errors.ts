@@ -8,6 +8,9 @@ import type { ErrorCode } from '../../lib/types'
 /**
  * Maps ErrorCode values to Spanish user-facing messages.
  * Coverage must include every code in the frontend ErrorCode union.
+ *
+ * Special cases:
+ * - UNREACHABLE_AI_NOT_CONFIGURED: used by toUserMessage when UNREACHABLE has details.reason === "AI not configured"
  */
 export const esErrorMessages: Record<ErrorCode, string> = {
   INVALID_KEY: 'La clave de API no es válida. Verificá que esté correcta y no haya expirado.',
@@ -20,3 +23,9 @@ export const esErrorMessages: Record<ErrorCode, string> = {
   SCAN_TIMEOUT: 'El escaneo tardó demasiado y fue cancelado. Intentá con un proyecto más pequeño.',
   INTERNAL: 'Ocurrió un error inesperado. Intentá de nuevo.',
 }
+
+/**
+ * Special-case message for AI not configured (UNREACHABLE + details.reason === "AI not configured").
+ * This is looked up by toUserMessage in errors.ts, not via the standard ErrorCode map.
+ */
+export const UNREACHABLE_AI_NOT_CONFIGURED = 'La IA no está configurada. Agregá tu clave de API para continuar.'

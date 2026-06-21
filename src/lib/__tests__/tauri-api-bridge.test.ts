@@ -93,9 +93,21 @@ describe('tauri-api bridge', () => {
   })
 
   describe('roundtrip — backend IPC payload to localized user message', () => {
-    it('maps AI_UNAVAILABLE payloads to the Spanish unreachable message', () => {
+    it('maps AI_UNAVAILABLE config payloads to a configuration-specific Spanish message', () => {
       const tauriError = new Error(
         'Error: {"code":"AI_UNAVAILABLE","message":"AI unavailable: AI not configured","details":{"reason":"AI not configured"}}'
+      )
+
+      const apiError = toApiError(tauriError, 'INTERNAL')
+      const userMessage = toUserMessage(apiError)
+
+      expect(apiError.code).toBe('UNREACHABLE')
+      expect(userMessage).toBe('La IA no está configurada. Agregá tu clave de API para continuar.')
+    })
+
+    it('maps AI_UNAVAILABLE with other reasons to UNREACHABLE (connectivity issue)', () => {
+      const tauriError = new Error(
+        'Error: {"code":"AI_UNAVAILABLE","message":"AI unavailable: network error","details":{"reason":"network error"}}'
       )
 
       const apiError = toApiError(tauriError, 'INTERNAL')

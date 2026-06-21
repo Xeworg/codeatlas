@@ -5,7 +5,7 @@
 // ErrorCode values to localized user messages.
 
 import type { ErrorCode } from './types'
-import { esErrorMessages } from '../locales/es/errors'
+import { esErrorMessages, UNREACHABLE_AI_NOT_CONFIGURED } from '../locales/es/errors'
 
 /**
  * Translate an error code to a user-friendly Spanish message.
@@ -13,7 +13,18 @@ import { esErrorMessages } from '../locales/es/errors'
  * Used by hooks and components to display localized, human-readable
  * error messages instead of raw backend messages or error codes.
  */
-export function toUserMessage(apiError: { code: ErrorCode; message?: string }): string {
+export function toUserMessage(apiError: {
+  code: ErrorCode
+  message?: string
+  details?: Record<string, unknown>
+}): string {
+  const reason =
+    typeof apiError.details?.reason === 'string' ? String(apiError.details.reason) : undefined
+
+  if (apiError.code === 'UNREACHABLE' && reason === 'AI not configured') {
+    return UNREACHABLE_AI_NOT_CONFIGURED
+  }
+
   // INTERNAL errors preserve the backend message as fallback.
   if (apiError.code === 'INTERNAL' && apiError.message) {
     return apiError.message

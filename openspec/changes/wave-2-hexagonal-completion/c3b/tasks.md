@@ -29,13 +29,13 @@ WU-1 T4 backend · WU-2 F2 frontend · WU-3 spec + TE3 roundtrip
 
 ## Phase 2: Backend T4 (commit 1/3)
 
-- [x] 2.1 RED: test — `explain_node`/`chat` emit `IpcErrorPayload` `AI_UNAVAILABLE` when `ai_config` is `None`
-- [x] 2.2 RED: test — `explain_node` emits `FILE_NOT_FOUND` + `details.path = node_id` on missing file
+- [x] 2.1 Test: `explain_node`/`chat` emit `IpcErrorPayload` `AI_UNAVAILABLE` when `ai_config` is `None` — IPC serializer tests + command-logic tests in `shim_tests.rs`
+- [x] 2.2 Test: `explain_node` emits `FILE_NOT_FOUND` + `details.path = node_id` on missing file
   - **Implementation**: `engine/tests/error_contract_test.rs` → `explain_node_returns_file_not_found_when_file_missing` (proves `AIServicePort::explain_node` returns `AppError::FileNotFound` for missing file; would FAIL if old `AppError::NotFound` code remained)
 - [x] 2.3 GREEN: replace `commands.rs:357,415` `"AI not configured".to_string()` → `AppError::AIUnavailable("AI not configured".to_string())` + `to_ipc_error`
 - [x] 2.4 GREEN: replace `engine/src/ai/service.rs:483` `AppError::NotFound(format!("File not found: {}", node_id))` → `AppError::FileNotFound(node_id.to_string())`
   - **Location update**: After C3a thin-shim refactor, `commands.rs` delegates to `AIServicePort::explain_node` (in `engine/src/ai/service.rs`), so the fix lives at the service layer not the presentation layer.
-  - **Validation**: `src-tauri/src/commands/tests/shim_tests.rs` → `explain_node_file_not_found_payload_when_node_missing` (IPC contract); `engine/tests/error_contract_test.rs` → `explain_node_returns_file_not_found_when_file_missing` (service-layer regression)
+  - **Validation**: `src-tauri/src/commands/tests/shim_tests.rs` → `serializer_ipc_payload_file_not_found_with_node_id` (IPC contract); `engine/tests/error_contract_test.rs` → `explain_node_returns_file_not_found_when_file_missing` (service-layer regression)
 - [x] 2.5 REFACTOR: `rg '\.to_string\(\)' src-tauri/src/commands.rs` — only status/ID sites remain
 
 ## Phase 3: Frontend F2 (commit 2/3)
@@ -45,6 +45,7 @@ WU-1 T4 backend · WU-2 F2 frontend · WU-3 spec + TE3 roundtrip
 - [x] 3.3 GREEN: re-export from `tauri-api.ts` for back-compat
 - [x] 3.4 GREEN: create `src/locales/es/errors.ts` with `ErrorCode → Spanish message` mapping
 - [x] 3.5 REFACTOR: `toUserMessage` reads from `src/locales/es/errors.ts`; drop inline literals
+- [x] 3.6 FIX: `AI_UNAVAILABLE` with reason "AI not configured" remains `UNREACHABLE` in `BACKEND_TO_FRONTEND_CODE`; `toUserMessage` special-cases it to show the setup/configuration Spanish message (configuration issue, not connectivity issue)
 
 ## Phase 4: TE3 + docs (commit 3/3)
 

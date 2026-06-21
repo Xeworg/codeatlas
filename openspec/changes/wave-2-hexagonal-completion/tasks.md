@@ -66,9 +66,8 @@ Chain strategy: feature-branch-chain
 
 - [x] 5.1 Verify `specs/error-contract/spec.md` matches locked decisions
 - [x] 5.2 Cross-link to canonical `openspec/specs/error-contract/spec.md`
-- [x] 5.3 RED: test `explain_node`/`chat` emit `IpcErrorPayload` `AI_UNAVAILABLE` (T4)
-- [x] 5.4 RED: test `explain_node` emits `FILE_NOT_FOUND` + `details.path = node_id` (T4)
-  - **Regression test**: `engine/tests/error_contract_test.rs` → `explain_node_returns_file_not_found_when_file_missing`
+- [x] 5.3 Test: `explain_node`/`chat` emit `IpcErrorPayload` `AI_UNAVAILABLE` — IPC serializer + command-logic tests in `shim_tests.rs` (T4)
+- [x] 5.4 Test: `explain_node` emits `FILE_NOT_FOUND` + `details.path = node_id` — IPC serializer test + service-layer regression in `engine/tests/error_contract_test.rs` (T4)
 - [x] 5.5 GREEN: 2x `"AI not configured".to_string()` → `AppError::AIUnavailable` + `to_ipc_error` (T4)
 - [x] 5.6 GREEN: `AppError::NotFound(format!("File not found: {}", node_id))` → `AppError::FileNotFound(node_id.to_string())` in `engine/src/ai/service.rs:483` (T4)
   - **Location**: After C3a thin-shim refactor the fix is in `AIServicePort::explain_node` (service layer), not `commands.rs`
@@ -84,7 +83,8 @@ Chain strategy: feature-branch-chain
 - [x] 5.15 `cargo test` is green in `engine` + `src-tauri`; `src-tauri` `cargo fmt --check` + `clippy -- -D warnings` are clean after the C3b follow-up fix; `engine` still has unrelated pre-existing clippy debt outside C3b scope
 - [x] 5.16 `npm run lint && typecheck && test && check:arch` clean
 - [x] 5.17 `src-tauri/src/commands.rs` has no raw string error returns; remaining `AI not configured` text appears only inside `AppError::AIUnavailable(...)` constructors, which is the locked C3b shape
-- [ ] 5.18 Open PR `feat/wave-2-c3b-error-boundary` (base `608a847`, chain-context block)
+- [x] 5.18 Frontend misconfiguration UX fix: `AI_UNAVAILABLE` with reason "AI not configured" remains `UNREACHABLE` in `BACKEND_TO_FRONTEND_CODE`; `toUserMessage` special-cases it to show the setup/configuration Spanish message (4R pre-PR fix)
+- [ ] 5.19 Open PR `feat/wave-2-c3b-error-boundary` (base `608a847`, chain-context block)
 
 ## Phase 6: Follow-up — Judgment Day Round 2
 
