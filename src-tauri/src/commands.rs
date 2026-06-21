@@ -6,7 +6,7 @@ use engine::{
     models::{
         ChatMessage, FileInfo, GraphData, NodeExplanation, OutlineItem, ScanResult, ScanStatus,
     },
-    ports::AppStatePortAdapter,
+    ports::{AppStatePortAdapter, SystemFileSourceReader},
     services::{AnalysisService, GraphService, ScanService},
     AppError,
 };
@@ -57,6 +57,8 @@ pub struct AppState {
     pub analysis_repo: Arc<dyn engine::ports::AnalysisDataSource>,
     /// Workspace repository port — consumed by 13 workspace commands in B.7.
     pub workspace_repo: Arc<dyn engine::ports::WorkspaceRepository>,
+    /// Database pool — used as `AnalysisQueryPort` for `AnalysisService`.
+    pub pool: std::sync::Arc<engine::db::DbPool>,
     /// Clock port — injectable wall-clock time (UTC).
     pub clock: Arc<dyn engine::Clock>,
     /// ID generator port — injectable UUID generation.
@@ -151,16 +153,8 @@ pub async fn get_scan_status(state: State<'_, AppState>) -> Result<ScanStatusRes
         state.stopwatch.clone(),
     );
     let status = service.get_scan_status().map_err(to_ipc_error)?;
-    let status_str = match status {
-        engine::models::ScanStatus::Idle => "idle",
-        engine::models::ScanStatus::Scanning => "scanning",
-        engine::models::ScanStatus::BuildingGraph => "building_graph",
-        engine::models::ScanStatus::Ready => "ready",
-        engine::models::ScanStatus::Cancelled => "cancelled",
-        engine::models::ScanStatus::Error => "error",
-    };
     Ok(ScanStatusResponse {
-        status: status_str.to_string(),
+        status: status.to_string(),
         progress: if matches!(status, engine::models::ScanStatus::Ready) {
             1.0
         } else {
@@ -216,7 +210,12 @@ pub async fn get_graph(
         &state.ai_config,
         &state.project_root,
     );
-    let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state_adapter,
+        SystemFileSourceReader,
+    );
     service.get_graph(&project_id).map_err(to_ipc_error)
 }
 
@@ -232,7 +231,12 @@ pub fn get_node_details(node_id: String, state: State<'_, AppState>) -> Result<F
         &state.ai_config,
         &state.project_root,
     );
-    let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state_adapter,
+        SystemFileSourceReader,
+    );
     service.get_node_details(&node_id).map_err(to_ipc_error)
 }
 
@@ -254,7 +258,12 @@ pub fn get_node_outline(
         &state.ai_config,
         &state.project_root,
     );
-    let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state_adapter,
+        SystemFileSourceReader,
+    );
     service
         .get_node_outline(&node_id, None)
         .map_err(to_ipc_error)
@@ -277,7 +286,12 @@ pub fn search_nodes(
         &state.ai_config,
         &state.project_root,
     );
-    let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state_adapter,
+        SystemFileSourceReader,
+    );
     service
         .search_nodes(&project_id, &query, limit)
         .map_err(to_ipc_error)
@@ -298,7 +312,12 @@ pub async fn get_dependencies(
         &state.ai_config,
         &state.project_root,
     );
-    let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state_adapter,
+        SystemFileSourceReader,
+    );
     service
         .get_dependencies(&node_id)
         .await
@@ -320,7 +339,12 @@ pub async fn get_dependents(
         &state.ai_config,
         &state.project_root,
     );
-    let service = GraphService::new(graph_repo, scan_repo, app_state_adapter);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state_adapter,
+        SystemFileSourceReader,
+    );
     service.get_dependents(&node_id).await.map_err(to_ipc_error)
 }
 
@@ -411,8 +435,9 @@ pub fn get_architecture_detection(
 ) -> Result<ArchitectureDetectionResponse, String> {
     let analysis_repo = state.analysis_repo.clone();
     let graph_repo = state.graph_repo.clone();
+    let pool = state.pool.clone();
     let clock = state.clock.clone();
-    let service = AnalysisService::new(analysis_repo, graph_repo, clock);
+    let service = AnalysisService::new(analysis_repo, graph_repo, pool, clock);
     service
         .get_architecture_detection(&project_id)
         .map_err(to_ipc_error)
@@ -428,8 +453,9 @@ pub fn get_impact_analysis(
 ) -> Result<ImpactAnalysisResponse, String> {
     let analysis_repo = state.analysis_repo.clone();
     let graph_repo = state.graph_repo.clone();
+    let pool = state.pool.clone();
     let clock = state.clock.clone();
-    let service = AnalysisService::new(analysis_repo, graph_repo, clock);
+    let service = AnalysisService::new(analysis_repo, graph_repo, pool, clock);
     service
         .get_impact_analysis(&project_id, &node_id)
         .map_err(to_ipc_error)
@@ -444,8 +470,9 @@ pub fn get_graph_insights(
 ) -> Result<GraphInsightsResponse, String> {
     let analysis_repo = state.analysis_repo.clone();
     let graph_repo = state.graph_repo.clone();
+    let pool = state.pool.clone();
     let clock = state.clock.clone();
-    let service = AnalysisService::new(analysis_repo, graph_repo, clock);
+    let service = AnalysisService::new(analysis_repo, graph_repo, pool, clock);
     service
         .get_graph_insights(&project_id)
         .map_err(to_ipc_error)
@@ -461,8 +488,9 @@ pub fn export_view(
 ) -> Result<ExportPayloadResponse, String> {
     let analysis_repo = state.analysis_repo.clone();
     let graph_repo = state.graph_repo.clone();
+    let pool = state.pool.clone();
     let clock = state.clock.clone();
-    let service = AnalysisService::new(analysis_repo, graph_repo, clock);
+    let service = AnalysisService::new(analysis_repo, graph_repo, pool, clock);
     service
         .export_view(&project_id, format)
         .map_err(to_ipc_error)

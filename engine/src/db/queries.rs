@@ -68,6 +68,46 @@ impl DbPool {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AnalysisQueryPort impl — enables `compute_impact` / `compute_graph_insights`
+// to accept `impl AnalysisQueryPort` instead of `&DbPool` directly, making
+// these functions unit-testable with a MockAnalysisQueryPort.
+//
+// `DbPool` is `Arc<Mutex<Connection>>` → `Send` but not `Sync`.
+// The `AnalysisQueryPort: Send` bound lets callers use `Arc<DbPool>` in tests.
+// ─────────────────────────────────────────────────────────────────────────────
+
+use crate::ports::hexagonal::AnalysisQueryPort;
+
+impl AnalysisQueryPort for DbPool {
+    fn get_files(&self, project_id: &str) -> Vec<(String, String)> {
+        self.with_connection(|conn| {
+            let mut stmt = conn.prepare("SELECT id, path FROM files WHERE project_id = ?1")?;
+            let rows = stmt.query_map([project_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap_or_default()
+    }
+
+    fn get_imports(&self, project_id: &str) -> Vec<(String, Option<String>)> {
+        self.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT i.source_file_id, i.target_file_id
+                 FROM imports i
+                 JOIN files f ON f.project_id = ?1
+                 WHERE i.source_file_id = f.id",
+            )?;
+            let rows = stmt.query_map([project_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap_or_default()
+    }
+}
+
 /// Low-level repository that holds a clone of the `DbPool` so the
 /// repository can be stored in `Arc<dyn ...>` for presentation-layer
 /// consumption (PR-B Tasks B.5–B.9). The pool is internally an

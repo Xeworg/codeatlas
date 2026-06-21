@@ -4,6 +4,7 @@
 //! - [`GraphRepository`] — graph cache persistence, file search, outline cache
 //! - [`ScanRepository`] — file metadata (get_file_by_id for node details)
 //! - [`AppStatePort`] — scan status tracking during graph operations
+//! - [`FileSourceReader`] — file content reading for on-demand outline parsing
 //!
 //! The service owns the graph build lifecycle:
 //! - cache hit → return cached JSON
@@ -27,7 +28,7 @@
 //!
 //! get_node_outline(node_id, root_path)
 //!   -> GraphRepository.get_outline_items()
-//!   -> if empty: on-demand parse via outline_for_file()
+//!   -> if empty: on-demand parse via FileSourceReader + outline_for_file()
 //!   -> GraphRepository.save_outline_items()
 //!
 //! search_nodes(project_id, query, limit)
@@ -37,6 +38,7 @@
 use crate::commands::outline_for_file;
 use crate::graph::GraphBuilder;
 use crate::models::{FileInfo, GraphData, GraphNode, NodeType, OutlineItem, ScanStatus};
+use crate::ports::hexagonal::FileSourceReader;
 use crate::ports::{AppStatePort, GraphRepository, ScanRepository};
 use crate::scanner::parser::ParserRegistry;
 use crate::AppError;
@@ -45,26 +47,31 @@ use std::path::Path;
 
 /// Application service for graph orchestration.
 ///
-/// Generic over `G: GraphRepository`, `S: ScanRepository`, and `A: AppStatePort`
-/// so tests can inject doubles without touching the database.
-pub struct GraphService<G, S, A> {
+/// Generic over `G: GraphRepository`, `S: ScanRepository`, `A: AppStatePort`,
+/// and `F: FileSourceReader` so tests can inject mock doubles without touching
+/// the real filesystem.
+pub struct GraphService<G, S, A, F> {
     graph_repo: G,
     scan_repo: S,
     state: A,
+    file_reader: F,
 }
 
-impl<G, S, A> GraphService<G, S, A> {
+impl<G, S, A, F> GraphService<G, S, A, F> {
     /// Construct a new GraphService.
-    pub fn new(graph_repo: G, scan_repo: S, state: A) -> Self {
+    pub fn new(graph_repo: G, scan_repo: S, state: A, file_reader: F) -> Self {
         Self {
             graph_repo,
             scan_repo,
             state,
+            file_reader,
         }
     }
 }
 
-impl<G: GraphRepository, S: ScanRepository, A: AppStatePort> GraphService<G, S, A> {
+impl<G: GraphRepository, S: ScanRepository, A: AppStatePort, F: FileSourceReader>
+    GraphService<G, S, A, F>
+{
     /// Get all nodes that the given node depends on (outgoing import edges).
     ///
     /// Returns `Err(AppError::NotFound)` if the node does not exist.
@@ -229,7 +236,7 @@ impl<G: GraphRepository, S: ScanRepository, A: AppStatePort> GraphService<G, S, 
 
         let abs_path = Path::new(&resolved_root).join(&file_info.path);
 
-        let content = match std::fs::read_to_string(&abs_path) {
+        let content = match self.file_reader.read_source(&abs_path) {
             Ok(c) => c,
             Err(e) => {
                 tracing::debug!("get_node_outline: could not read {:?}: {}", abs_path, e);
@@ -308,8 +315,9 @@ mod tests {
             Mutex::new(None),
             Mutex::new(String::new()),
         );
+        let file_reader = crate::ports::SystemFileSourceReader;
 
-        let service = GraphService::new(graph_repo, scan_repo, app_state);
+        let service = GraphService::new(graph_repo, scan_repo, app_state, file_reader);
         // Service constructed — trait bounds satisfied
         assert!(true);
     }

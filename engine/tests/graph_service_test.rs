@@ -12,8 +12,10 @@
 //! - `search_nodes`: searches files by name, returns GraphNode list
 
 use engine::models::{FileInfo, OutlineItem, ScanStatus};
+use engine::ports::hexagonal::FileSourceReader;
 use engine::ports::AppStatePort;
 use engine::services::{GraphService, ScanService};
+use std::path::Path;
 use std::sync::Mutex;
 
 fn make_scan_service<S: engine::ports::ScanRepository, A: AppStatePort>(
@@ -77,6 +79,20 @@ impl engine::ports::ScanRepository for NoOpScanRepo {
 
 /// Mock AppStatePort for tests that don't need to verify state transitions.
 struct NoOpAppState;
+
+/// A FileSourceReader test double that returns controlled content.
+struct MockFileSrc(&'static str);
+
+impl FileSourceReader for MockFileSrc {
+    fn read_source(&self, _path: &Path) -> std::io::Result<String> {
+        Ok(self.0.to_string())
+    }
+}
+
+/// Returns a mock file reader that returns `content` on every read.
+fn mock_src(content: &'static str) -> impl FileSourceReader {
+    MockFileSrc(content)
+}
 impl AppStatePort for NoOpAppState {
     fn get_scan_status(&self) -> engine::Result<ScanStatus> {
         Ok(ScanStatus::Ready)
@@ -190,7 +206,7 @@ fn get_graph_returns_cached_graph_when_cache_hit() {
 
     let scan_repo = NoOpScanRepo;
     let state = NoOpAppState;
-    let service = GraphService::new(repo, scan_repo, state);
+    let service = GraphService::new(repo, scan_repo, state, mock_src(""));
 
     let result = service.get_graph("p1");
 
@@ -236,7 +252,12 @@ fn get_graph_builds_fresh_graph_on_cache_miss() {
     let scan_repo = engine::ports::ScanRepositoryAdapter::new(&pool);
     let app_state_graph =
         engine::ports::AppStatePortAdapter::from_arc_refs(&scan_status, &ai_config, &project_root);
-    let service = GraphService::new(graph_repo, scan_repo, app_state_graph);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state_graph,
+        engine::ports::SystemFileSourceReader,
+    );
 
     let result = service.get_graph(&project_id);
     assert!(
@@ -272,7 +293,12 @@ fn get_graph_returns_error_when_no_files() {
         Mutex::new(String::new()),
     );
 
-    let service = GraphService::new(graph_repo, scan_repo, app_state);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state,
+        engine::ports::SystemFileSourceReader,
+    );
 
     let result = service.get_graph("nonexistent-project-id");
     assert!(result.is_err(), "get_graph should error on missing project");
@@ -314,7 +340,12 @@ fn get_node_details_returns_file_info() {
     let scan_repo = engine::ports::ScanRepositoryAdapter::new(&pool);
     let app_state_graph =
         engine::ports::AppStatePortAdapter::from_arc_refs(&scan_status, &ai_config, &project_root);
-    let service = GraphService::new(graph_repo, scan_repo, app_state_graph);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state_graph,
+        engine::ports::SystemFileSourceReader,
+    );
 
     let result = service.get_node_details(&file_id);
     assert!(
@@ -335,7 +366,7 @@ fn get_node_details_returns_error_for_unknown_node() {
     let repo = RecordingGraphRepo::new();
     let scan_repo = NoOpScanRepo;
     let state = NoOpAppState;
-    let service = GraphService::new(repo, scan_repo, state);
+    let service = GraphService::new(repo, scan_repo, state, mock_src(""));
 
     let result = service.get_node_details("nonexistent-node-id");
     assert!(
@@ -353,7 +384,7 @@ fn get_node_outline_returns_cached_outline() {
     let repo = RecordingGraphRepo::new();
     let scan_repo = NoOpScanRepo;
     let state = NoOpAppState;
-    let service = GraphService::new(repo, scan_repo, state);
+    let service = GraphService::new(repo, scan_repo, state, mock_src(""));
 
     let result = service.get_node_outline("some-file-id", None);
     assert!(
@@ -378,7 +409,7 @@ fn search_nodes_returns_matching_files() {
     let repo = RecordingGraphRepo::new();
     let scan_repo = NoOpScanRepo;
     let state = NoOpAppState;
-    let service = GraphService::new(repo, scan_repo, state);
+    let service = GraphService::new(repo, scan_repo, state, mock_src(""));
 
     let result = service.search_nodes("p1", "Main", None);
     assert!(
@@ -429,7 +460,7 @@ fn search_nodes_respects_limit() {
 
     let scan_repo = NoOpScanRepo;
     let state = NoOpAppState;
-    let service = GraphService::new(repo, scan_repo, state);
+    let service = GraphService::new(repo, scan_repo, state, mock_src(""));
 
     let result = service.search_nodes("p1", "Component", Some(2));
     assert!(result.is_ok());
@@ -472,7 +503,12 @@ fn get_graph_transitions_status_through_building_graph_to_ready() {
     let scan_repo = engine::ports::ScanRepositoryAdapter::new(&pool);
     let app_state_graph =
         engine::ports::AppStatePortAdapter::from_arc_refs(&scan_status, &ai_config, &project_root);
-    let service = GraphService::new(graph_repo, scan_repo, app_state_graph);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state_graph,
+        engine::ports::SystemFileSourceReader,
+    );
 
     let result = service.get_graph(&project_id);
     assert!(result.is_ok());
@@ -504,7 +540,12 @@ fn get_graph_sets_error_status_when_no_files() {
     let scan_repo = engine::ports::ScanRepositoryAdapter::new(&pool);
     let app_state =
         engine::ports::AppStatePortAdapter::from_arc_refs(&scan_status, &ai_config, &project_root);
-    let service = GraphService::new(graph_repo, scan_repo, app_state);
+    let service = GraphService::new(
+        graph_repo,
+        scan_repo,
+        app_state,
+        engine::ports::SystemFileSourceReader,
+    );
 
     let result = service.get_graph("totally-nonexistent-project");
     assert!(result.is_err());

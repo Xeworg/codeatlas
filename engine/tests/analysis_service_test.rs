@@ -62,10 +62,20 @@ fn ensure_graph_insights_table(pool: &DbPool) {
 
 fn service(
     pool: &DbPool,
-) -> AnalysisService<AnalysisDataSourceAdapter, GraphRepositoryAdapter, engine::SystemClock> {
+) -> AnalysisService<
+    AnalysisDataSourceAdapter,
+    GraphRepositoryAdapter,
+    std::sync::Arc<DbPool>,
+    engine::SystemClock,
+> {
     let analysis_repo = AnalysisDataSourceAdapter::new(pool);
     let graph_repo = GraphRepositoryAdapter::new(pool);
-    AnalysisService::new(analysis_repo, graph_repo, engine::SystemClock)
+    AnalysisService::new(
+        analysis_repo,
+        graph_repo,
+        std::sync::Arc::new(pool.clone()),
+        engine::SystemClock,
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

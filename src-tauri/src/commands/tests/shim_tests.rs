@@ -17,9 +17,9 @@
 
 #[allow(unused_imports)]
 use engine::models::ImportInfo;
+use serde_json::Value;
 #[allow(unused_imports)]
 use std::collections::HashMap;
-use serde_json::Value;
 use std::sync::{Arc, Mutex};
 
 /// Simulates the conversion that scan_project applies to all_imports:
@@ -287,8 +287,9 @@ fn build_test_app(ai_config: Option<engine::models::AIConfig>) -> tauri::App<Moc
             std::sync::Arc::new(pool.clone()),
         )) as std::sync::Arc<dyn engine::ports::AnalysisDataSource>,
         workspace_repo: std::sync::Arc::new(engine::ports::WorkspaceRepositoryAdapter::from_arc(
-            std::sync::Arc::new(pool),
+            std::sync::Arc::new(pool.clone()),
         )) as std::sync::Arc<dyn engine::ports::WorkspaceRepository>,
+        pool: std::sync::Arc::new(pool),
         clock: std::sync::Arc::new(engine::SystemClock) as std::sync::Arc<dyn engine::Clock>,
         id_gen: std::sync::Arc::new(engine::RandomIdGen) as std::sync::Arc<dyn engine::IdGenerator>,
         stopwatch: std::sync::Arc::new(engine::SystemStopwatch)

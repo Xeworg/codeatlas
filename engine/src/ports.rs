@@ -660,11 +660,6 @@ impl WorkspaceRepository for WorkspaceRepositoryAdapter {
 /// insights so that `AnalysisService` is decoupled from the concrete
 /// `ProjectRepository` implementation.
 pub trait AnalysisDataSource: Send + Sync {
-    /// Returns a reference to the underlying database pool.
-    /// Used by `AnalysisService` to pass to pure analysis functions that
-    /// take `&DbPool` directly.
-    fn pool(&self) -> &DbPool;
-
     /// Persist an architecture detection result for a project.
     fn save_architecture_detection(
         &self,
@@ -704,7 +699,6 @@ pub trait AnalysisDataSource: Send + Sync {
 /// Two constructors: `new(&pool)` for internal tests, `from_arc(Arc<DbPool>)`
 /// for production (stores the adapter inside `Arc<dyn AnalysisDataSource>`).
 pub struct AnalysisDataSourceAdapter {
-    pool: std::sync::Arc<DbPool>,
     inner: crate::db::queries::ProjectRepository<'static>,
 }
 
@@ -712,24 +706,18 @@ impl AnalysisDataSourceAdapter {
     pub fn new(pool: &crate::db::DbPool) -> Self {
         let pool = std::sync::Arc::new(pool.clone());
         Self {
-            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
-            pool,
+            inner: crate::db::queries::ProjectRepository::from_arc(pool),
         }
     }
 
     pub fn from_arc(pool: std::sync::Arc<crate::db::DbPool>) -> Self {
         Self {
-            inner: crate::db::queries::ProjectRepository::from_arc(pool.clone()),
-            pool,
+            inner: crate::db::queries::ProjectRepository::from_arc(pool),
         }
     }
 }
 
 impl AnalysisDataSource for AnalysisDataSourceAdapter {
-    fn pool(&self) -> &crate::db::DbPool {
-        &self.pool
-    }
-
     fn save_architecture_detection(
         &self,
         project_id: &str,
@@ -983,9 +971,6 @@ impl GraphRepository for std::sync::Arc<dyn GraphRepository> {
 }
 
 impl AnalysisDataSource for std::sync::Arc<dyn AnalysisDataSource> {
-    fn pool(&self) -> &DbPool {
-        (**self).pool()
-    }
     fn save_architecture_detection(
         &self,
         project_id: &str,
@@ -1160,10 +1145,6 @@ mod from_arc_tests {
         // The adapter's internal Arc still holds the pool alive; the
         // Weak from the caller can still upgrade.
         assert!(weak.upgrade().is_some());
-        // And the pool() method returns a usable DbPool.
-        let pool_ref = adapter.pool();
-        let result = pool_ref.with_connection(|conn| conn.execute_batch("SELECT 1"));
-        assert!(result.is_ok());
     }
 
     #[test]
@@ -1232,15 +1213,16 @@ mod from_arc_tests {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hexagonal ports — Clock, IdGenerator, Stopwatch (wave 2)
+// Hexagonal ports — Clock, IdGenerator, Stopwatch, FileSourceReader (wave 2)
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub mod hexagonal;
 
-// Re-export the three port traits and their adapters at the ports module level
-// so callers can use `engine::ports::{Clock, IdGenerator, Stopwatch}` without
-// knowing the inner module name.
+// Re-export the port traits and their adapters at the ports module level
+// so callers can use `engine::ports::{Clock, IdGenerator, Stopwatch, FileSourceReader}`
+// without knowing the inner module name.
 pub use hexagonal::{
-    Clock, IdGenerator, MockClock, MockIdGen, MockStopwatch, RandomIdGen, Stopwatch,
-    StopwatchHandle, SystemClock, SystemStopwatch,
+    Clock, FileSourceReader, IdGenerator, MockClock, MockFileSourceReader, MockIdGen,
+    MockStopwatch, RandomIdGen, Stopwatch, StopwatchHandle, SystemClock, SystemFileSourceReader,
+    SystemStopwatch,
 };
