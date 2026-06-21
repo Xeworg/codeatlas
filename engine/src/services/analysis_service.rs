@@ -9,10 +9,19 @@
 //! ```text
 //! Tauri command shim
 //!   -> AnalysisService
-//!     -> AnalysisDataSource  (persistence + pool accessor)
-//!     -> GraphRepository      (graph cache)
-//!     -> engine::analysis::*  (pure computation)
+//!     -> AnalysisDataSource  (persistence)
+//!     -> AnalysisQueryPort   (read-only queries for analysis functions)
+//!     -> GraphRepository     (graph cache)
+//!     -> Clock               (timestamping)
+//!     -> engine::analysis::* (pure computation)
 //! ```
+//!
+//! # C5 8.3 — pool() back door removed
+//!
+//! `AnalysisService` takes `Q: AnalysisQueryPort` directly instead of
+//! deriving it from `AnalysisDataSource::pool()`. This eliminates the
+//! `AnalysisDataSource::pool()` back door and enables true unit tests
+//! with `MockAnalysisQueryPort`.
 
 use crate::analysis::{
     compute_graph_insights, compute_impact, detect_architecture,
@@ -20,7 +29,7 @@ use crate::analysis::{
     ArchitectureDetectionResult as EngineArchResult, ImpactAnalysisResult as EngineImpactResult,
     InsightsConfig,
 };
-use crate::ports::hexagonal::Clock;
+use crate::ports::hexagonal::{AnalysisQueryPort, Clock};
 use crate::ports::{AnalysisDataSource, GraphRepository};
 use crate::Result;
 use serde::Serialize;
@@ -150,35 +159,42 @@ pub struct ExportMetadata {
 
 /// Application service for advanced analysis and export operations.
 ///
-/// Generic over `A: AnalysisDataSource`, `G: GraphRepository`, and `C: Clock` so that
-/// all operations are fully testable with mock doubles. The `Clock` port is used
-/// exclusively by `export_view` to produce deterministic `generated_at` timestamps.
+/// Generic over `A: AnalysisDataSource`, `G: GraphRepository`, `Q: AnalysisQueryPort`,
+/// and `C: Clock` so that all operations are fully testable with mock doubles.
+/// `AnalysisQueryPort` is taken DIRECTLY (not via `AnalysisDataSource::pool()`) to
+/// eliminate the pool back door and enable proper unit testing.
 ///
 /// # Methods
 /// - `get_architecture_detection` — detect architectural pattern from file paths
 /// - `get_impact_analysis` — compute change impact propagation through the graph
 /// - `get_graph_insights` — compute cycles, hotspots, coupling, and density
 /// - `export_view` — assemble export payload from cached graph and insights
-pub struct AnalysisService<'pool, A, G, C> {
+pub struct AnalysisService<A, G, Q, C> {
     analysis_repo: A,
     graph_repo: G,
+    query_port: Q,
     clock: C,
-    _phantom: std::marker::PhantomData<&'pool ()>,
 }
 
-impl<'pool, A, G, C> AnalysisService<'pool, A, G, C>
+impl<A, G, Q, C> AnalysisService<A, G, Q, C>
 where
     A: AnalysisDataSource,
     G: GraphRepository,
+    Q: AnalysisQueryPort,
     C: Clock,
 {
-    /// Construct a new `AnalysisService` with the given repositories and clock.
-    pub fn new(analysis_repo: A, graph_repo: G, clock: C) -> Self {
+    /// Construct a new `AnalysisService` with the given repositories, query port, and clock.
+    ///
+    /// `query_port` is the `AnalysisQueryPort` used for read-only queries by
+    /// `compute_impact` and `compute_graph_insights`. In production this is
+    /// `Arc<DbPool>` (which implements `AnalysisQueryPort` via blanket impl).
+    /// In tests this is `MockAnalysisQueryPort` for deterministic behavior.
+    pub fn new(analysis_repo: A, graph_repo: G, query_port: Q, clock: C) -> Self {
         Self {
             analysis_repo,
             graph_repo,
+            query_port,
             clock,
-            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -223,6 +239,7 @@ where
     /// Compute the impact of changing a given node on the dependency graph.
     ///
     /// Uses BFS traversal over import edges to find affected downstream nodes.
+    /// Takes `&self.query_port` directly instead of going through `pool()` back door.
     pub fn get_impact_analysis(
         &self,
         project_id: &str,
@@ -230,11 +247,11 @@ where
     ) -> Result<ImpactAnalysisResponse> {
         let timing_start = std::time::Instant::now();
 
-        let pool = self.analysis_repo.pool();
+        // Use query_port directly — no pool() back door
         let result = compute_impact(
             project_id,
             node_id,
-            pool,
+            &self.query_port,
             &crate::analysis::ImpactConfig::default(),
         );
 
@@ -254,11 +271,12 @@ where
     /// Compute graph insights: cycles, hotspots, coupling, and density.
     ///
     /// Persists the result via `AnalysisDataSource::save_graph_insights`.
+    /// Uses `&self.query_port` directly — no `pool()` back door.
     pub fn get_graph_insights(&self, project_id: &str) -> Result<GraphInsightsResponse> {
         let timing_start = std::time::Instant::now();
 
-        let pool = self.analysis_repo.pool();
-        let result = compute_graph_insights(project_id, pool, &InsightsConfig::default());
+        let result =
+            compute_graph_insights(project_id, &self.query_port, &InsightsConfig::default());
 
         let elapsed_ms = timing_start.elapsed().as_millis() as u64;
         tracing::info!(
@@ -357,5 +375,78 @@ where
                 generated_at: self.clock.now().to_rfc3339(),
             },
         })
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unit tests — C5 8.3
+//
+// These tests verify that `AnalysisService` is truly unit-testable with
+// `MockAnalysisQueryPort`. The key seam is `AnalysisQueryPort`, which
+// `compute_impact` and `compute_graph_insights` use instead of `&DbPool`.
+//
+// The `MockAnalysisQueryPort` tests prove that callers can inject a
+// deterministic test double without any real database. This enables fast,
+// isolated unit tests for analysis logic.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+    use crate::ports::hexagonal::{MockAnalysisQueryPort, SystemClock};
+    use crate::ports::{AnalysisDataSourceAdapter, GraphRepositoryAdapter};
+
+    // ─── MockAnalysisQueryPort seam tests ─────────────────────────────────────
+
+    #[test]
+    fn mock_analysis_query_port_satisfies_analysis_query_port_bound() {
+        // Compile-time proof: `MockAnalysisQueryPort` implements `AnalysisQueryPort`.
+        // This is the key type-level guarantee that enables unit testing.
+        fn _requires_q<Q: AnalysisQueryPort>() {}
+        _requires_q::<MockAnalysisQueryPort>();
+    }
+
+    #[test]
+    fn mock_port_can_be_passed_to_analysis_service_as_query_port() {
+        // Runtime proof: `AnalysisService` can be constructed and used with
+        // `MockAnalysisQueryPort` as the `Q` type parameter. This proves the
+        // seam is usable in practice for true unit tests.
+        let mock_port = MockAnalysisQueryPort::new();
+        mock_port.set_files("proj-1", vec![("f1".into(), "src/A.ts".into())]);
+        mock_port.set_imports("proj-1", vec![]);
+
+        // Build service with concrete adapters for A and G, mock for Q.
+        // An in-memory pool is used only for A and G (which are not the seam
+        // under test here); Q is the fully mocked port.
+        let pool = crate::db::DbPool::in_memory().expect("in-memory DB must succeed");
+        let analysis_repo = AnalysisDataSourceAdapter::new(&pool);
+        let graph_repo = GraphRepositoryAdapter::new(&pool);
+
+        let service = AnalysisService::new(analysis_repo, graph_repo, mock_port, SystemClock);
+
+        // Call get_impact_analysis — it uses query_port (mock) for data.
+        // Result is Ok with empty affected nodes (no imports in mock data).
+        let result = service.get_impact_analysis("proj-1", "f1").unwrap();
+        assert_eq!(result.changed_node_id, "f1");
+        assert!(result.affected_nodes.is_empty());
+        // The seam works: mock port was used, no real DB required for the query.
+    }
+
+    // ─── Query port abstraction tests ────────────────────────────────────────
+
+    #[test]
+    fn dbpool_implements_analysis_query_port() {
+        // Verify `DbPool` implements `AnalysisQueryPort` via the blanket impl.
+        // This is the production path: `Arc<DbPool>` is passed as `query_port`.
+        fn _requires_q<Q: AnalysisQueryPort>() {}
+        _requires_q::<crate::db::DbPool>();
+    }
+
+    #[test]
+    fn arc_dbpool_implements_analysis_query_port() {
+        // The production `query_port` is `Arc<DbPool>`, which also satisfies
+        // `AnalysisQueryPort` via the blanket `Arc<T>` impl.
+        fn _requires_q<Q: AnalysisQueryPort>() {}
+        _requires_q::<std::sync::Arc<crate::db::DbPool>>();
     }
 }

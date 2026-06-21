@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use std::fmt;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -13,6 +15,20 @@ pub enum ScanStatus {
     Ready,
     Cancelled,
     Error,
+}
+
+impl fmt::Display for ScanStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Idle => "idle",
+            Self::Scanning => "scanning",
+            Self::BuildingGraph => "building_graph",
+            Self::Ready => "ready",
+            Self::Cancelled => "cancelled",
+            Self::Error => "error",
+        };
+        write!(f, "{}", s)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

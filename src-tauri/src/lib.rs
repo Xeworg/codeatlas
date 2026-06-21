@@ -82,6 +82,7 @@ pub fn run() {
                     )),
                 )
                     as std::sync::Arc<dyn engine::ports::WorkspaceRepository>,
+                pool: std::sync::Arc::new(pool.clone()),
                 clock: std::sync::Arc::new(engine::SystemClock)
                     as std::sync::Arc<dyn engine::Clock>,
                 id_gen: std::sync::Arc::new(engine::RandomIdGen)

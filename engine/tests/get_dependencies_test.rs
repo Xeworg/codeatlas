@@ -4,9 +4,24 @@
 
 use engine::models::AIConfig;
 use engine::models::{FileInfo, NodeRef, ScanStatus};
+use engine::ports::hexagonal::FileSourceReader;
 use engine::ports::{AppStatePort, GraphRepository, ScanRepository};
 use engine::services::GraphService;
 use std::collections::HashMap;
+use std::path::Path;
+
+/// Mock file reader that returns empty content on every read.
+struct MockFileSrc(&'static str);
+
+impl FileSourceReader for MockFileSrc {
+    fn read_source(&self, _path: &Path) -> std::io::Result<String> {
+        Ok(self.0.to_string())
+    }
+}
+
+fn mock_file_reader() -> impl FileSourceReader {
+    MockFileSrc("")
+}
 
 /// Mock GraphRepository for testing get_dependencies and get_dependents.
 struct MockGraphRepo {
@@ -205,7 +220,7 @@ async fn get_dependencies_returns_deps_for_known_node() {
     let graph_repo = MockGraphRepo::with_dependencies("a-id", deps);
     let scan_repo = MockScanRepo::with_node("a-id");
     let state = MockAppState;
-    let service = GraphService::new(graph_repo, scan_repo, state);
+    let service = GraphService::new(graph_repo, scan_repo, state, mock_file_reader());
 
     let result = service.get_dependencies("a-id").await;
 
@@ -225,7 +240,7 @@ async fn get_dependencies_returns_empty_for_node_with_no_deps() {
     let graph_repo = MockGraphRepo::new(); // no deps for any node
     let scan_repo = MockScanRepo::with_node("x-id"); // but x-id is known
     let state = MockAppState;
-    let service = GraphService::new(graph_repo, scan_repo, state);
+    let service = GraphService::new(graph_repo, scan_repo, state, mock_file_reader());
 
     let result = service.get_dependencies("x-id").await;
 
@@ -245,7 +260,7 @@ async fn get_dependencies_returns_not_found_for_unknown_node() {
     let graph_repo = MockGraphRepo::new();
     let scan_repo = MockScanRepo::new(); // no known nodes
     let state = MockAppState;
-    let service = GraphService::new(graph_repo, scan_repo, state);
+    let service = GraphService::new(graph_repo, scan_repo, state, mock_file_reader());
 
     let result = service.get_dependencies("ghost-node").await;
 
@@ -266,7 +281,7 @@ async fn get_dependents_returns_deps_for_known_node() {
     let graph_repo = MockGraphRepo::with_dependents("c-id", deps);
     let scan_repo = MockScanRepo::with_node("c-id");
     let state = MockAppState;
-    let service = GraphService::new(graph_repo, scan_repo, state);
+    let service = GraphService::new(graph_repo, scan_repo, state, mock_file_reader());
 
     let result = service.get_dependents("c-id").await;
 
@@ -286,7 +301,7 @@ async fn get_dependents_returns_empty_for_node_with_no_deps() {
     let graph_repo = MockGraphRepo::new(); // no dependents for any node
     let scan_repo = MockScanRepo::with_node("x-id"); // but x-id is known
     let state = MockAppState;
-    let service = GraphService::new(graph_repo, scan_repo, state);
+    let service = GraphService::new(graph_repo, scan_repo, state, mock_file_reader());
 
     let result = service.get_dependents("x-id").await;
 
@@ -306,7 +321,7 @@ async fn get_dependents_returns_not_found_for_unknown_node() {
     let graph_repo = MockGraphRepo::new();
     let scan_repo = MockScanRepo::new(); // no known nodes
     let state = MockAppState;
-    let service = GraphService::new(graph_repo, scan_repo, state);
+    let service = GraphService::new(graph_repo, scan_repo, state, mock_file_reader());
 
     let result = service.get_dependents("ghost-node").await;
 

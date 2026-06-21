@@ -1,9 +1,10 @@
-//! Hexagonal ports — Clock, IdGenerator, Stopwatch (wave 2).
+//! Hexagonal ports — Clock, IdGenerator, Stopwatch, FileSourceReader (wave 2).
 //!
-//! These three traits close the remaining application-layer time/id/duration leaks:
+//! These traits close the remaining application-layer time/id/duration/fs leaks:
 //! - [`Clock`] — injectable wall-clock time (UTC DateTime)
 //! - [`IdGenerator`] — injectable UUID generation
 //! - [`Stopwatch`] — injectable elapsed-time measurement
+//! - [`FileSourceReader`] — injectable file source reading
 //!
 //! Each trait has two adapters:
 //! - **System adapter** — delegates to the real system call; used in production
@@ -13,9 +14,10 @@
 //!
 //! After this module lands, no service in `engine/src/services/` or
 //! `engine/src/ai/` should call `chrono::Utc::now()`, `uuid::Uuid::new_v4()`,
-//! or `std::time::Instant::now()` directly.
+//! `std::time::Instant::now()`, or `std::fs::read_to_string()` directly.
 
 use chrono::{DateTime, Utc};
+use std::path::Path;
 use uuid::Uuid;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -304,6 +306,223 @@ impl Stopwatch for MockStopwatch {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FileSourceReader — file content read port (S1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Port for reading file source content.
+///
+/// Abstracts `std::fs::read_to_string()` so that `GraphService::get_node_outline`
+/// is testable without touching the real filesystem.
+///
+/// System adapter: [`SystemFileSourceReader`]
+/// Mock adapter: [`MockFileSourceReader`]
+pub trait FileSourceReader: Send + Sync {
+    /// Read the full content of the file at `path` as a UTF-8 string.
+    ///
+    /// Returns `Err` if the file does not exist or cannot be read as UTF-8.
+    fn read_source(&self, path: &Path) -> std::io::Result<String>;
+}
+
+/// System-file-source reader — delegates to `std::fs::read_to_string()`.
+pub struct SystemFileSourceReader;
+
+impl FileSourceReader for SystemFileSourceReader {
+    fn read_source(&self, path: &Path) -> std::io::Result<String> {
+        std::fs::read_to_string(path)
+    }
+}
+
+/// Mock-file-source reader — returns controlled content for deterministic tests.
+///
+/// Uses `Mutex<String>` for interior mutability so `set_content` works on `&self`
+/// and the struct satisfies `Send + Sync`.
+#[derive(Debug)]
+pub struct MockFileSourceReader {
+    /// Content returned by every `read_source` call.
+    content: std::sync::Mutex<String>,
+    /// Whether `read_source` should succeed or fail.
+    error: std::sync::Mutex<Option<std::io::ErrorKind>>,
+}
+
+impl Clone for MockFileSourceReader {
+    fn clone(&self) -> Self {
+        Self {
+            content: std::sync::Mutex::new(self.content.lock().unwrap().clone()),
+            error: std::sync::Mutex::new(*self.error.lock().unwrap()),
+        }
+    }
+}
+
+impl MockFileSourceReader {
+    /// Construct a mock that returns `content` on every read.
+    pub fn new(content: String) -> Self {
+        Self {
+            content: std::sync::Mutex::new(content),
+            error: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Construct a mock that returns an empty string on every read.
+    pub fn empty() -> Self {
+        Self::new(String::new())
+    }
+
+    /// Overwrite the returned content.
+    pub fn set_content(&self, content: String) {
+        *self.content.lock().unwrap() = content;
+    }
+
+    /// Configure `read_source` to return an error of the given kind.
+    pub fn set_error(&self, kind: std::io::ErrorKind) {
+        *self.error.lock().unwrap() = Some(kind);
+    }
+
+    /// Clear any configured error (reads will succeed).
+    pub fn clear_error(&self) {
+        *self.error.lock().unwrap() = None;
+    }
+}
+
+impl FileSourceReader for MockFileSourceReader {
+    fn read_source(&self, _path: &Path) -> std::io::Result<String> {
+        if let Some(kind) = *self.error.lock().unwrap() {
+            return Err(std::io::Error::from(kind));
+        }
+        Ok(self.content.lock().unwrap().clone())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnalysisQueryPort — read-only query interface for analysis functions (C5 8.3)
+//
+// Abstracts the two DB read operations needed by `compute_impact` and
+// `compute_graph_insights` so these pure functions are mockable in unit tests
+// without requiring a real `DbPool` (which is !Sync).
+//
+// Key design:
+// - `Send` bound only (not `Sync`) — `DbPool` is Send but not Sync
+// - `MockAnalysisQueryPort` uses `Mutex<Vec>` for interior mutability so the
+//   mock struct itself satisfies `Send + Sync` while holding test data
+// - `Arc<DbPool>` satisfies `AnalysisQueryPort` via blanket impl ( Deref → DbPool)
+//
+// Adopted pattern: same dual-injection (owned Arc + generic) as Clock/IdGen.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Read-only query port for analysis functions.
+///
+/// Abstracts the specific DB queries needed by `compute_impact` and
+/// `compute_graph_insights` so these functions accept `impl AnalysisQueryPort`
+/// instead of `&DbPool`, enabling unit testing with mock implementations.
+///
+/// **Design rationale**: `DbPool` (which is `Arc<Mutex<Connection>>`) is `Send`
+/// but **not** `Sync` because `rusqlite::Connection` is `!Sync`. By introducing
+/// this `Send`-only port, `compute_impact` and `compute_graph_insights` become
+/// mockable with a `MockAnalysisQueryPort` that is `Send + Sync`, while the
+/// production path via `Arc<DbPool>` continues to work because `Arc<DbPool>: Send`.
+///
+/// System adapter: [`DbPool`] (via blanket impl below)
+/// Mock adapter: [`MockAnalysisQueryPort`]
+pub trait AnalysisQueryPort {
+    /// Returns all files belonging to `project_id` as `(id, path)` pairs.
+    ///
+    /// Corresponds to the `SELECT id, path FROM files WHERE project_id = ?1`
+    /// query used by both `compute_impact` and `compute_graph_insights`.
+    fn get_files(&self, project_id: &str) -> Vec<(String, String)>;
+
+    /// Returns all import edges for `project_id` as `(source_file_id, target_file_id)` pairs.
+    ///
+    /// `target_file_id` may be `None` if the import target cannot be resolved.
+    /// Corresponds to the import join query used by `compute_impact`.
+    fn get_imports(&self, project_id: &str) -> Vec<(String, Option<String>)>;
+}
+
+/// Mock query port — returns controlled test data without any DB.
+///
+/// Uses `Mutex<Vec>` for interior mutability so the struct satisfies `Send + Sync`
+/// even though the stored test data is logically owned. This allows
+/// `MockAnalysisQueryPort` to be used in `AnalysisService` tests without
+/// requiring a real database.
+///
+/// # Example
+/// ```
+/// use engine::ports::hexagonal::{AnalysisQueryPort, MockAnalysisQueryPort};
+/// let mock = MockAnalysisQueryPort::new();
+/// mock.set_files("proj-1", vec![("f1".into(), "src/A.ts".into())]);
+/// mock.set_imports("proj-1", vec![("f2".into(), Some("f1".into()))]);
+/// assert_eq!(mock.get_files("proj-1").len(), 1);
+/// ```
+#[derive(Debug)]
+pub struct MockAnalysisQueryPort {
+    files: std::sync::Mutex<std::collections::HashMap<String, Vec<(String, String)>>>,
+    imports: std::sync::Mutex<std::collections::HashMap<String, Vec<(String, Option<String>)>>>,
+}
+
+impl Clone for MockAnalysisQueryPort {
+    fn clone(&self) -> Self {
+        Self {
+            files: std::sync::Mutex::new(self.files.lock().unwrap().clone()),
+            imports: std::sync::Mutex::new(self.imports.lock().unwrap().clone()),
+        }
+    }
+}
+
+impl MockAnalysisQueryPort {
+    /// Construct an empty mock port.
+    pub fn new() -> Self {
+        Self {
+            files: std::sync::Mutex::new(std::collections::HashMap::new()),
+            imports: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Set the files returned by `get_files` for a given project.
+    pub fn set_files(&self, project_id: &str, files: Vec<(String, String)>) {
+        *self
+            .files
+            .lock()
+            .unwrap()
+            .entry(project_id.to_string())
+            .or_insert_with(Vec::new) = files;
+    }
+
+    /// Set the imports returned by `get_imports` for a given project.
+    pub fn set_imports(&self, project_id: &str, imports: Vec<(String, Option<String>)>) {
+        *self
+            .imports
+            .lock()
+            .unwrap()
+            .entry(project_id.to_string())
+            .or_insert_with(Vec::new) = imports;
+    }
+}
+
+impl Default for MockAnalysisQueryPort {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AnalysisQueryPort for MockAnalysisQueryPort {
+    fn get_files(&self, project_id: &str) -> Vec<(String, String)> {
+        self.files
+            .lock()
+            .unwrap()
+            .get(project_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn get_imports(&self, project_id: &str) -> Vec<(String, Option<String>)> {
+        self.imports
+            .lock()
+            .unwrap()
+            .get(project_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Arc<dyn Trait> impls — enable Arc<dyn Trait> to satisfy S: Trait bounds
 // in service constructors (mirrors the pattern in ports.rs).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -327,6 +546,47 @@ impl Stopwatch for std::sync::Arc<dyn Stopwatch> {
 
     fn elapsed_ms(&self, handle: &StopwatchHandle) -> u64 {
         (**self).elapsed_ms(handle)
+    }
+}
+
+impl FileSourceReader for std::sync::Arc<dyn FileSourceReader> {
+    fn read_source(&self, path: &Path) -> std::io::Result<String> {
+        (**self).read_source(path)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnalysisQueryPort impls
+//
+// Blanket impl for Arc<T> where T: AnalysisQueryPort so that callers can pass
+// Arc<DbPool> directly as impl AnalysisQueryPort.
+//
+// Blanket impl for &T where T: AnalysisQueryPort allows callers to pass &DbPool
+// (returned by AnalysisDataSourceAdapter::pool()) as impl AnalysisQueryPort.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Blanket impl: any `Arc<T>` where `T: AnalysisQueryPort` also implements it.
+/// This allows passing `Arc<DbPool>` directly as `impl AnalysisQueryPort`.
+impl<T: AnalysisQueryPort + ?Sized> AnalysisQueryPort for std::sync::Arc<T> {
+    fn get_files(&self, project_id: &str) -> Vec<(String, String)> {
+        (**self).get_files(project_id)
+    }
+
+    fn get_imports(&self, project_id: &str) -> Vec<(String, Option<String>)> {
+        (**self).get_imports(project_id)
+    }
+}
+
+/// Blanket impl: any `&T` where `T: AnalysisQueryPort` also implements it.
+/// This allows passing `&DbPool` (returned by `AnalysisDataSourceAdapter::pool()`)
+/// as `impl AnalysisQueryPort`.
+impl<T: AnalysisQueryPort + ?Sized> AnalysisQueryPort for &T {
+    fn get_files(&self, project_id: &str) -> Vec<(String, String)> {
+        (**self).get_files(project_id)
+    }
+
+    fn get_imports(&self, project_id: &str) -> Vec<(String, Option<String>)> {
+        (**self).get_imports(project_id)
     }
 }
 
