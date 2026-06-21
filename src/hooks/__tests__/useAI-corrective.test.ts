@@ -72,6 +72,15 @@ describe('B1: AI error translation — toUserMessage', () => {
     expect(result).toBe('No se pudo conectar al proveedor de IA. Verificá tu conexión a internet.')
   })
 
+  it('GREEN: translates AI misconfiguration details to a setup-specific Spanish message', async () => {
+    const { toUserMessage } = await import('../../lib/tauri-api')
+    const result = toUserMessage({
+      code: 'UNREACHABLE',
+      details: { reason: 'AI not configured' },
+    })
+    expect(result).toBe('La IA no está configurada. Agregá tu clave de API para continuar.')
+  })
+
   it('GREEN: translates PATH_NOT_FOUND to Spanish', async () => {
     const { toUserMessage } = await import('../../lib/tauri-api')
     const result = toUserMessage({ code: 'PATH_NOT_FOUND' })

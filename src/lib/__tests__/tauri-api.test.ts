@@ -49,6 +49,20 @@ describe('toApiError — structured JSON parsing', () => {
       expect(result.message).toBe('AI unavailable: network error')
     })
 
+    it('preserves details for AI_UNAVAILABLE with "AI not configured"', () => {
+      const backendPayload = JSON.stringify({
+        code: 'AI_UNAVAILABLE',
+        message: 'AI unavailable: AI not configured',
+        details: { reason: 'AI not configured' },
+      })
+      const err = makeError(backendPayload)
+      const result = toApiError(err, 'INTERNAL')
+
+      expect(result.code).toBe('UNREACHABLE')
+      expect(result.message).toBe('AI unavailable: AI not configured')
+      expect(result.details).toEqual({ reason: 'AI not configured' })
+    })
+
     it('parses AI_RATE_LIMITED and maps to RATE_LIMITED', () => {
       const backendPayload = JSON.stringify({
         code: 'AI_RATE_LIMITED',

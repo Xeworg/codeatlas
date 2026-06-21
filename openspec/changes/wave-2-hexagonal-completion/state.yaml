@@ -1,0 +1,104 @@
+change: wave-2-hexagonal-completion
+phase: c3b-tasks
+artifact_store: both
+last_updated: 2026-06-12T20:50:00Z
+
+slices:
+  c1:
+    status: complete
+    branch: feat/wave-2-c1-foundations
+    pr: 9
+    merge_commit: be33134
+    tasks_total: 6
+    tasks_completed: 6
+    size_exception: false
+    verified_at: 2026-06-10
+  c2:
+    status: complete
+    branch: feat/wave-2-c2-clock-ports
+    pr: 10
+    merge_commit: fe26f70
+    tasks_total: 7
+    tasks_completed: 7
+    size_exception: false
+    verified_at: 2026-06-10
+  c3a:
+    status: complete
+    branch: feat/wave-2-c3a-ai-context-prep
+    pr: 12
+    merge_commit: a19dc32
+    tasks_total: 7
+    tasks_completed: 7
+    size_exception: true
+    verified_at: 2026-06-12
+  c3b:
+    status: pr-ready
+    branch: pending
+    pr: pending
+    size_exception: false
+    estimated_lines: 250-400
+    risk: medium
+    next_phase: open-pr
+  c4:
+    status: pending
+  c5:
+    status: pending
+  c6:
+    status: pending
+  c7:
+    status: pending
+
+artifacts:
+  proposal: present
+  design: present
+  tasks: present
+  specs:
+    hexagonal-ports: present
+    cqrs-repository: present
+    command-bridge: present
+    backend-ports-and-services: present
+    error-contract: present
+  c3a:
+    tasks: present
+    apply-progress: present
+  c3b:
+    exploration: present
+    proposal: missing
+    design: missing
+    tasks: present
+    specs:
+      error-contract: present
+    tasks_artifact_path: >-
+      openspec/changes/wave-2-hexagonal-completion/c3b/tasks.md
+    spec_delta_path: >-
+      openspec/changes/wave-2-hexagonal-completion/specs/error-contract/spec.md
+    estimated_lines: 250-400
+    risk: medium
+    chain_strategy: feature-branch-chain
+    base_branch: origin/feat/wave-2-c3a-ai-context-prep@608a847
+    blockers: []
+
+recovery:
+  performed_at: 2026-06-12T20:24:00Z
+  performed_by: sdd-explore sub-agent (codeatlas)
+  reason: >-
+    native dispatcher reported `Active OpenSpec change not found:
+    wave-2-hexagonal-completion`; parent change root was absent locally even
+    though origin/main already contains the C3a merge.
+  source: >-
+    engram observations #674 (proposal), #678 (design), #675 (specs), #679
+    (tasks), #694 (c3a tasks), #698+#699 (c3a apply-progress), #711 (PR #12
+    close), #681 (AD-009 amendment), #715 (blocker confirmation)
+  notes: |
+    - Language-domain contract for this session: technical artifacts in
+      English (orchestrator directive), but rehydrated source files preserve
+      original Spanish to maintain fidelity to the prior SDD work.
+    - Recovery note preserved for traceability: this file was rehydrated when
+      local state still thought C3a was outside `main`. The current working
+      tree is now at `a19dc32`, so the old B1 blocker is obsolete; C3b is
+      locally ready for PR preparation from the C3a chain base.
+    - The error-contract delta spec was authored with an in-place Wave 2 Delta
+      header at openspec/specs/error-contract/spec.md per observation #675 open
+      issue #3; the change-folder copy at specs/error-contract/spec.md
+      preserves the delta content but the archive phase will need a manual
+      merge step.

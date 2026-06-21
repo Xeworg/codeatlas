@@ -480,7 +480,7 @@ where
         let file_info = self
             .scan_repo
             .get_file_by_id(node_id)?
-            .ok_or_else(|| crate::AppError::NotFound(format!("File not found: {}", node_id)))?;
+            .ok_or_else(|| crate::AppError::FileNotFound(node_id.to_string()))?;
 
         // Resolve project root (DB root if available, otherwise state fallback)
         let root = self
